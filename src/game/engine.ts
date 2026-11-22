@@ -18,17 +18,35 @@ export const ITEMS = [
   { id: 'slime', name: 'Poção escorregadia', symbol: 'poção', color: '#9be255' },
 ] as const;
 
-const TAU = Math.PI * 2;
 const wrap = (x: number, m = 1) => ((x % m) + m) % m;
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
-// A flowing closed course with sweeping corners, a fast stretch and a gentle hill.
+type TrackControl = [number, number, number];
+// The first cubic is collinear and forms the only straight. Every later cubic
+// bends around the cemetery before the final hairpin returns to the start.
+const TRACK_SECTIONS: TrackControl[][] = [
+  [[0, 1.4, -55], [0, 1.4, -18], [0, 1.4, 18], [0, 1.4, 55]],
+  [[0, 1.4, 55], [0, 1.4, 78], [24, 1.9, 82], [38, 1.9, 66]],
+  [[38, 1.9, 66], [52, 1.9, 50], [72, 1.5, 67], [80, 1.5, 43]],
+  [[80, 1.5, 43], [88, 1.5, 19], [78, 1.1, -2], [64, 1.1, -14]],
+  [[64, 1.1, -14], [50, 1.1, -26], [60, 0.9, -48], [38, 0.9, -50]],
+  [[38, 0.9, -50], [16, 0.9, -52], [18, 1.3, -76], [0, 1.3, -76]],
+  [[0, 1.3, -76], [-18, 1.3, -76], [0, 1.4, -66], [0, 1.4, -55]],
+];
+export const START_STRAIGHT_LENGTH = TRACK_SECTIONS[0][3][2] - TRACK_SECTIONS[0][0][2];
+function cubic(a: number, b: number, c: number, d: number, t: number) {
+  const u = 1 - t;
+  return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
+}
 function rawPoint(t: number) {
-  const a = wrap(t) * TAU;
+  const scaled = wrap(t) * TRACK_SECTIONS.length;
+  const index = Math.min(TRACK_SECTIONS.length - 1, Math.floor(scaled));
+  const localT = scaled - index;
+  const section = TRACK_SECTIONS[index];
   return {
-    x: 57 * Math.sin(a) + 12 * Math.sin(2 * a),
-    y: 1.1 + 2.2 * Math.sin(a - 0.5) + 1.1 * Math.sin(a * 2),
-    z: 43 * Math.cos(a) + 10 * Math.sin(a * 3),
+    x: cubic(section[0][0], section[1][0], section[2][0], section[3][0], localT),
+    y: cubic(section[0][1], section[1][1], section[2][1], section[3][1], localT),
+    z: cubic(section[0][2], section[1][2], section[2][2], section[3][2], localT),
   };
 }
 // Arc-length lookup makes speed independent of local track curvature.
@@ -182,8 +200,8 @@ export type EventKind = 'countdown' | 'pickup' | 'use' | 'hit' | 'shield' | 'boo
 export interface RaceEvent { seq: number; type: EventKind; value?: number; item?: string }
 export const DRIFT_BLUE = 0.55;
 export const DRIFT_ORANGE = 1.5;
-export const ROAD_EDGE = 5.05;
-export const WALL_EDGE = 6.15;
+export const ROAD_EDGE = 6.6;
+export const WALL_EDGE = 7.8;
 export const driftTier = (charge: number) => charge >= DRIFT_ORANGE ? 2 : charge >= DRIFT_BLUE ? 1 : 0;
 export interface RaceResult { id: number; time: number; position: number; estimated: boolean }
 export interface ItemBox { t: number; lane: number; cooldown: number }
@@ -220,7 +238,7 @@ export function createRace(characterId: number, difficulty: Difficulty = 'normal
       reverseHold: 0, wrongWay: 0, stumble: 0, pickupFlash: 0, useFlash: 0, hitFlash: 0,
     })),
     time: 0, countdown: 3, finished: false, results: [], hazards: [], projectiles: [], difficulty, motorClass,
-    boxes: [0.12, 0.36, 0.61, 0.84].flatMap(t => [-3.4, 0, 3.4].map(lane => ({ t, lane, cooldown: 0 }))),
+    boxes: [0.34, 0.50, 0.68, 0.84].flatMap(t => [-4, 0, 4].map(lane => ({ t, lane, cooldown: 0 }))),
     message: '', messageTime: 0, aiTimers: ids.map((_, i) => 7 + i * 1.8), itemHeld: false,
     events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null,
   };

@@ -7,7 +7,7 @@ export const DIFFICULTIES = {
 } as const;
 export type Difficulty = keyof typeof DIFFICULTIES;
 export const BOOST_PADS = [
-  { t: 0.23, lane: 0 }, { t: 0.52, lane: -2.4 }, { t: 0.77, lane: 2.4 }, { t: 0.94, lane: 0 },
+  { t: 0.40, lane: 2.2 }, { t: 0.565, lane: -2.2 }, { t: 0.70, lane: 2.2 }, { t: 0.93, lane: 0 },
 ] as const;
 export function loadDifficulty(): Difficulty {
   try { const saved = localStorage.getItem('hk-difficulty'); if (saved === 'easy' || saved === 'hard') return saved; } catch { /* Storage can be disabled. */ }

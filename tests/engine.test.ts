@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { KEY_MAP } from '../src/game/controls.ts';
 import { BOOST_PADS, bumpRacers, DIFFICULTIES, updateDraft } from '../src/game/arcade.ts';
 import { MOTOR_CLASSES } from '../src/game/motors.ts';
-import { CHARACTERS, ITEMS, TRACK_LENGTH, WALL_EDGE, ROAD_EDGE, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, type Racer, type Input } from '../src/game/engine.ts';
+import { CHARACTERS, ITEMS, TRACK_LENGTH, START_STRAIGHT_LENGTH, WALL_EDGE, ROAD_EDGE, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, type Racer, type Input } from '../src/game/engine.ts';
 
 const gas: Input = { accelerate: true, brake: false, left: false, right: false, drift: false, item: false };
 const coast: Input = { ...gas, accelerate: false };
@@ -57,6 +57,22 @@ test('every character can finish a genuine three-lap race with all six unique ra
     assert.ok(race.results.every(r => Number.isFinite(r.time) && r.time > 0));
   }
 });
+
+test('the circuit has one long start straight and curved remaining sections', () => {
+  const angleDelta = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  const start = trackPoint(0);
+  assert.ok(Math.abs(start.angle) < 0.01, 'grid must face down the +Z start straight');
+  for (const distance of [10, 35, 70, START_STRAIGHT_LENGTH - 10]) {
+    assert.ok(Math.abs(angleDelta(start.angle, trackPoint(distance / TRACK_LENGTH).angle)) < 0.02);
+  }
+  assert.ok(Math.abs(angleDelta(start.angle, trackPoint((START_STRAIGHT_LENGTH + 15) / TRACK_LENGTH).angle)) > 0.1,
+    'the first corner must begin immediately after the long straight');
+  for (const frac of [0.34, 0.50, 0.68, 0.84, 0.93]) {
+    const before = trackPoint(frac - 0.01), after = trackPoint(frac + 0.01);
+    assert.ok(Math.abs(angleDelta(before.angle, after.angle)) > 0.08, `section at ${frac} should curve`);
+  }
+});
+
 test('no race movement before Vai; brake stops before intentional reverse', () => {
   const race = createRace(0);
   run(race, 2);
@@ -82,10 +98,12 @@ test('walls keep kart inside fences and steering back always recovers', () => {
 });
 test('releasing a charged turn drift grants a short boost', () => {
   const race = ready(); race.boxes = [];
-  sit(race.racers[0], 0, 0);
+  sit(race.racers[0], START_STRAIGHT_LENGTH * 0.45, 0);
   race.racers[0].speed = 20;
   run(race, 0.7, { ...gas, drift: true, left: true });
   assert.ok(race.racers[0].driftCharge > 0.45);
+  sit(race.racers[0], race.racers[0].progress, 0);
+  race.racers[0].speed = 20;
   updateRace(race, 1 / 60, gas);
   assert.ok(race.racers[0].boost > 0);
   assert.match(race.message, /Impulso/);
@@ -160,7 +178,7 @@ test('AI stay on the road and sometimes use collected items', () => {
   updateRace(race, 1 / 60, gas);
   assert.ok(race.racers[1].shield > 0);
   run(race, 25);
-  assert.ok(race.racers.slice(1).every(r => Math.abs(r.lane) <= 3.5 && r.progress > 200));
+  assert.ok(race.racers.slice(1).every(r => Math.abs(r.lane) <= ROAD_EDGE && r.progress > 200));
 });
 test('slow frames preserve elapsed race time', () => {
   const race = ready();
@@ -210,14 +228,15 @@ test('orange drift turbo is longer and stronger than blue', () => {
 test('offroad slows the kart and wall impact bounces without stopping it', () => {
   const race = ready(); race.boxes = [];
   const p = race.racers[0];
-  sit(p, 0, 0);
+  sit(p, START_STRAIGHT_LENGTH * 0.45, 0);
   p.speed = 28;
   p.heading = p.heading + Math.PI / 2;
   updateRace(race, 1 / 60, gas);
   assert.ok(Math.abs(p.lane) <= WALL_EDGE + 0.001);
   assert.ok(p.speed > 15);
-  run(race, 0.8, gas);
-  assert.ok(p.offroad || Math.abs(p.lane) > ROAD_EDGE * 0.8);
+  for (let i = 0; i < 48 && !p.offroad; i++) updateRace(race, 1 / 60, gas);
+  assert.ok(p.offroad, 'driving sideways must leave the asphalt');
+  run(race, 0.35, gas);
   const offroadSpeed = p.speed;
   assert.ok(offroadSpeed < 28);
   // Steer back toward the track centerline.
@@ -234,10 +253,11 @@ test('offroad slows the kart and wall impact bounces without stopping it', () =>
 });
 test('deliberate reverse warns about wrong way and acceleration recovers', () => {
   const race = ready(); race.boxes = [];
+  sit(race.racers[0], START_STRAIGHT_LENGTH * 0.45, 0);
   run(race, 2, { ...coast, brake: true });
   assert.ok(race.racers[0].speed < -1);
   assert.ok(race.racers[0].wrongWay > 0.35);
-  assert.ok(race.racers[0].progress < 0);
+  assert.ok(race.racers[0].progress < START_STRAIGHT_LENGTH * 0.45);
   run(race, 2, gas);
   assert.ok(race.racers[0].speed > 1);
   assert.equal(race.racers[0].wrongWay, 0);

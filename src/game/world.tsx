@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { trackPoint } from './engine';
 import { StaticScenery } from './StaticScenery';
 
-export const HALF = 6;
+export const HALF = 7.5;
 type S = { x: number; y: number; z: number; angle: number };
 
 export interface TrackData {
@@ -104,12 +104,18 @@ function Track() {
   const geos = useMemo(() => {
     const { samples, groundY } = td;
     const road = strip(samples, s => lat(s, HALF, 0.02), s => lat(s, -HALF, 0.02));
-    const roadCol = new THREE.Color('#2b2340');
-    const dash = new THREE.Color('#e9dcff');
+    const roadCol = new THREE.Color('#171923');
+    const dash = new THREE.Color('#d9c9ef');
     const center = strip(samples, s => lat(s, 0.16, 0.05), s => lat(s, -0.16, 0.05), i => (Math.floor(i / 5) % 2 ? dash : roadCol));
     const orange = new THREE.Color('#ff7a1a');
-    const purple = new THREE.Color('#6b2fd0');
-    const curbC = (i: number) => (Math.floor(i / 4) % 2 ? orange : purple);
+    const purple = new THREE.Color('#8549dc');
+    const curbDark = new THREE.Color('#282431');
+    const inCurve = (i: number) => {
+      const before = samples[(i - 1 + samples.length) % samples.length].angle;
+      const after = samples[(i + 1) % samples.length].angle;
+      return Math.abs(Math.atan2(Math.sin(after - before), Math.cos(after - before))) > 0.00015;
+    };
+    const curbC = (i: number) => !inCurve(i) ? curbDark : Math.floor(i / 3) % 2 ? orange : purple;
     const curbL = strip(samples, s => lat(s, HALF + 0.9, 0.09), s => lat(s, HALF - 0.1, 0.09), curbC);
     const curbR = strip(samples, s => lat(s, -HALF + 0.1, 0.09), s => lat(s, -HALF - 0.9, 0.09), curbC);
     const skirtL = strip(samples, s => lat(s, HALF + 0.9, 0.09), s => [...lat(s, HALF + 0.9)].map((v, k) => (k === 1 ? groundY : v)) as V3);
@@ -478,7 +484,7 @@ export function World() {
   return (
     <>
       <color attach="background" args={['#1d1035']} />
-      <fogExp2 attach="fog" args={['#2a1648', 0.0105]} />
+      <fogExp2 attach="fog" args={['#2a1648', 0.0065]} />
       <hemisphereLight args={['#8d6bff', '#2a0f24', 0.85]} />
       <ambientLight intensity={0.25} color="#b3a0ff" />
       <directionalLight position={[-140, 95, -210]} intensity={1.6} color="#d6ddff" />
