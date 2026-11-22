@@ -24,26 +24,37 @@ Os outros cinco monstros correm contra você, controlados pelo jogo. Ao escolher
 
 ## Como jogar
 
-Corrida de **3 voltas**, com minimapa, aviso de contramão e redução de velocidade fora da pista. Nas curvas, derrape e solte para ganhar um miniturbo (faíscas **azuis** e, se segurar mais, **laranjas**).
+Corrida de **3 voltas**, com minimapa, aviso de contramão e redução de velocidade fora da pista. Nas curvas, dê um pulo e derrape; solte para ganhar um miniturbo (faíscas **azuis** e, se segurar mais, **laranjas**). Há também rampas de impulso, vácuo atrás de outro kart, batidas entre karts e uma roleta curta antes do item ficar pronto.
 
 ### Largada especial
 
-Na contagem 3-2-1-Vai, comece a acelerar logo depois de aparecer o **1** e segure até o **Vai!** para ganhar um impulso de largada. Acelerar cedo demais faz o motor engasgar.
+Na contagem 3-2-1-Vai, comece a acelerar com a **seta para cima** logo depois de aparecer o **1** e segure até o **Vai!** para ganhar um impulso de largada. Acelerar cedo demais faz o motor engasgar.
+
+### Dificuldade e velocidade do motor
+
+Na tela inicial e na escolha do personagem você define duas opções independentes, lembradas no navegador:
+
+- **Dificuldade** — Fácil, Normal ou Difícil: muda o ritmo e a agressividade dos adversários.
+- **Velocidade do motor** — Normal (padrão) ou Turbo, no estilo 100cc/150cc. O Turbo aumenta a velocidade máxima em cerca de 22% e a aceleração em cerca de 25% para **todos** os karts (você e a IA), com um pouco mais de aderência e direção e uma câmera mais rápida, para continuar controlável. A classe escolhida aparece no HUD e na tela de resultados.
 
 ### Teclado
 
+O esquema principal usa as setas e o espaço:
+
 | Tecla | Ação |
 | ----- | ---- |
-| W ou seta para cima | Acelerar |
-| S ou seta para baixo | Frear |
-| A / D ou setas laterais | Virar |
-| Espaço | Derrapar: faíscas azuis → laranjas; solte para turbinar |
-| E | Usar item |
+| Seta para cima (ou W) | Acelerar |
+| Seta para baixo (ou S) | Frear e, se estiver parado, ré |
+| Setas laterais (ou A / D) | Virar |
+| Espaço | Usar o poder, depois da roleta do item |
+| Shift (esquerdo ou direito; ou Z / X) | Pular e derrapar: faíscas azuis → laranjas; solte para turbinar |
 | Esc ou P | Pausar |
+
+O WASD permanece como alternativa só para movimento. A tecla E também usa o item, como atalho extra.
 
 ### Toque (celular)
 
-Há botões na tela para acelerar, frear, virar, derrapar e usar item.
+Há botões na tela para acelerar, frear, virar, usar o item e derrapar.
 
 ## Itens
 
@@ -53,6 +64,8 @@ Há botões na tela para acelerar, frear, virar, derrapar e usar item.
 - **Escudo de ossos** — proteção por alguns segundos
 - **Poção escorregadia** — deixa uma poça atrás do kart
 
+Depois de um impacto, o kart fica invulnerável por um instante.
+
 ## Música e sons
 
 Toda a trilha e os efeitos são originais, gerados no navegador (Web Audio API). Não há músicas com direitos autorais.
@@ -61,7 +74,7 @@ Toda a trilha e os efeitos são originais, gerados no navegador (Web Audio API).
 - Motor que muda com a velocidade, derrapagem, turbo, coleta e uso de itens, impactos, apitos da largada, volta concluída, jingle da última volta e fanfarra de chegada
 - Som de assinatura ao selecionar cada monstro
 - Controles de **Música** e **Efeitos sonoros**, além de silenciar, na tela inicial e na pausa
-- As preferências são salvas no navegador
+- As preferências de áudio, dificuldade e classe do motor são salvas no navegador
 - O áudio só começa depois da primeira interação (clique, toque ou tecla), por regra dos navegadores
 
 ## Rodar localmente
@@ -73,7 +86,7 @@ npm install
 npm run dev
 ```
 
-Abra o endereço que o Vite mostrar (em geral `http://localhost:5173`).
+Abre o endereço que o Vite mostrar (em geral `http://localhost:5173`).
 
 Outros comandos:
 

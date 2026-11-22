@@ -1,0 +1,66 @@
+import type { Racer, RaceState } from './engine';
+
+export const DIFFICULTIES = {
+  easy: { label: 'Fácil', pace: 0.85, catchup: 0.08, aggression: 1.45 },
+  normal: { label: 'Normal', pace: 0.96, catchup: 0.065, aggression: 1 },
+  hard: { label: 'Difícil', pace: 1.025, catchup: 0.05, aggression: 0.72 },
+} as const;
+export type Difficulty = keyof typeof DIFFICULTIES;
+export const BOOST_PADS = [
+  { t: 0.23, lane: 0 }, { t: 0.52, lane: -2.4 }, { t: 0.77, lane: 2.4 }, { t: 0.94, lane: 0 },
+] as const;
+export function loadDifficulty(): Difficulty {
+  try { const saved = localStorage.getItem('hk-difficulty'); if (saved === 'easy' || saved === 'hard') return saved; } catch { /* Storage can be disabled. */ }
+  return 'normal';
+}
+export function saveDifficulty(value: Difficulty) {
+  try { localStorage.setItem('hk-difficulty', value); } catch { /* The choice still applies to this session. */ }
+}
+export interface ArcadeRacer {
+  hop: number; driftDirection: number; driftHeld: boolean; roulette: number; recovery: number;
+  bumpCooldown: number; draftCharge: number; draftCooldown: number; draftActive: boolean; padCooldown: number;
+}
+export function arcadeRacer(): ArcadeRacer {
+  return { hop: 0, driftDirection: 0, driftHeld: false, roulette: 0, recovery: 0,
+    bumpCooldown: 0, draftCharge: 0, draftCooldown: 0, draftActive: false, padCooldown: 0 };
+}
+export function crossedMarker(before: number, after: number, t: number, length: number, margin = 1.8) {
+  if (after < before) return false;
+  const marker = Math.floor(before / length) * length + t * length;
+  return (marker >= before - margin && marker <= after + margin)
+    || (marker + length >= before - margin && marker + length <= after + margin);
+}
+export function updateDraft(racer: Racer, racers: Racer[], length: number, dt: number) {
+  racer.draftActive = racer.speed > 12 && !racer.offroad && racer.spin === 0 && racers.some(other => {
+    if (other === racer || other.finishTime !== null) return false;
+    const gap = ((other.progress - racer.progress) % length + length) % length;
+    return gap > 2.5 && gap < 15 && other.speed > 10 && Math.abs(other.lane - racer.lane) < 1.25;
+  });
+  racer.draftCharge = Math.max(0, Math.min(1.15, racer.draftCharge + (racer.draftActive ? dt : -dt * 2)));
+  if (racer.draftCharge >= 1.1 && racer.draftCooldown === 0) {
+    racer.draftCharge = 0;
+    racer.draftCooldown = 3;
+    return true;
+  }
+  return false;
+}
+/** Six racers need only fifteen inexpensive contact tests per simulation step. */
+export function bumpRacers(race: RaceState, length: number) {
+  let playerBumped = false;
+  for (let i = 0; i < race.racers.length; i++) for (let j = i + 1; j < race.racers.length; j++) {
+    const a = race.racers[i], b = race.racers[j];
+    if (a.finishTime !== null || b.finishTime !== null || a.recovery > 0 || b.recovery > 0 || a.bumpCooldown > 0 || b.bumpCooldown > 0) continue;
+    const gap = ((a.progress - b.progress + length / 2) % length + length) % length - length / 2;
+    if (Math.abs(gap) >= 2.25 || Math.abs(a.lane - b.lane) >= 1.8 || Math.max(a.speed, b.speed) < 3) continue;
+    const direction = Math.sign(a.lane - b.lane) || (i % 2 ? 1 : -1);
+    const separation = (1.85 - Math.abs(a.lane - b.lane)) * 0.5;
+    a.lane = Math.max(-6.08, Math.min(6.08, a.lane + direction * separation));
+    b.lane = Math.max(-6.08, Math.min(6.08, b.lane - direction * separation));
+    a.lateralSpeed += direction * 1.6; b.lateralSpeed -= direction * 1.6;
+    const exchange = (a.speed - b.speed) * 0.12;
+    a.speed -= exchange; b.speed += exchange;
+    a.bumpCooldown = b.bumpCooldown = 0.3;
+    if (i === 0) playerBumped = true;
+  }
+  return playerBumped;
+}

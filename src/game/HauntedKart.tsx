@@ -1,19 +1,13 @@
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { KeyboardControls } from '@react-three/drei';
-import { CHARACTERS, createRace, type Input, type RaceResult } from './engine';
+import { CHARACTERS, createRace, useItem, type Input, type RaceResult } from './engine';
 import { Scene, type Phase } from './scene';
 import { HUD, Instructions, PauseButton, PauseOverlay, ResultsScreen, SelectScreen, TitleScreen, TopBar, TouchControls } from './ui';
 import { audio } from './audio';
-
-const keyMap = [
-  { name: 'accelerate', keys: ['ArrowUp', 'KeyW'] },
-  { name: 'brake', keys: ['ArrowDown', 'KeyS'] },
-  { name: 'left', keys: ['ArrowLeft', 'KeyA'] },
-  { name: 'right', keys: ['ArrowRight', 'KeyD'] },
-  { name: 'drift', keys: ['Space'] },
-  { name: 'item', keys: ['KeyE'] },
-];
+import { KEY_MAP as keyMap } from './controls';
+import { loadDifficulty, saveDifficulty, type Difficulty } from './arcade';
+import { loadMotorClass, saveMotorClass, type MotorClass } from './motors';
 
 function hasWebGL() {
   try {
@@ -28,6 +22,8 @@ export default function HauntedKart() {
   const [webgl] = useState(hasWebGL);
   const [phase, setPhase] = useState<Phase>('title');
   const [selectedId, setSelectedId] = useState<number>(firstId);
+  const [difficulty, setDifficulty] = useState<Difficulty>(loadDifficulty);
+  const [motorClass, setMotorClass] = useState<MotorClass>(loadMotorClass);
   const raceRef = useRef(createRace(firstId));
   const [raceVersion, setRaceVersion] = useState(0);
   const touchRef = useRef<Input>({ accelerate: false, brake: false, left: false, right: false, drift: false, item: false });
@@ -52,7 +48,9 @@ export default function HauntedKart() {
     audio.setPaused(v);
     pausedRef.current = v; setPaused(v);
   }, [clearInputs]);
-  const newRace = useCallback((id: number) => { clearInputs(); raceRef.current = createRace(id); setRaceVersion(v => v + 1); }, [clearInputs]);
+  const newRace = useCallback((id: number) => { clearInputs(); raceRef.current = createRace(id, difficulty, motorClass); setRaceVersion(v => v + 1); }, [clearInputs, difficulty, motorClass]);
+  const chooseDifficulty = (value: Difficulty) => { setDifficulty(value); saveDifficulty(value); };
+  const chooseMotor = (value: MotorClass) => { setMotorClass(value); saveMotorClass(value); };
   const startRace = (id: number) => { audio.start(); setPause(false); newRace(id); setPhase('race'); };
   const toMenu = () => { setPause(false); newRace(selectedId); setPhase('title'); };
   const onFinish = useCallback(() => { setResults([...raceRef.current.results]); setPhase('results'); }, []);
@@ -78,9 +76,12 @@ export default function HauntedKart() {
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
       if (phase === 'race' && !pausedRef.current && (e.code === 'Space' || e.code.startsWith('Arrow'))) e.preventDefault();
       if (e.repeat) return;
+      // Discrete actions must not disappear when keydown and keyup both happen
+      // between two animation frames on a slower phone.
+      if (phase === 'race' && !pausedRef.current && (e.code === 'Space' || e.code === 'KeyE')) useItem(raceRef.current);
       if (e.code === 'Escape' && help) closeHelp();
       else if ((e.code === 'Escape' || e.code === 'KeyP') && phase === 'race' && !help) setPause(!pausedRef.current);
     };
@@ -133,15 +134,15 @@ export default function HauntedKart() {
           {phase === 'race' && <PauseButton onClick={() => setPause(true)} />}
         </TopBar>
 
-        {phase === 'title' && <TitleScreen onPlay={() => { audio.start(); setPhase('select'); }} onHelp={openHelp} />}
-        {phase === 'select' && <SelectScreen selectedId={selectedId} onSelect={id => { setSelectedId(id); audio.selectMonster(id); }} onRace={() => startRace(selectedId)} onBack={() => setPhase('title')} />}
+        {phase === 'title' && <TitleScreen difficulty={difficulty} onDifficulty={chooseDifficulty} motorClass={motorClass} onMotorClass={chooseMotor} onPlay={() => { audio.start(); setPhase('select'); }} onHelp={openHelp} />}
+        {phase === 'select' && <SelectScreen difficulty={difficulty} onDifficulty={chooseDifficulty} motorClass={motorClass} onMotorClass={chooseMotor} selectedId={selectedId} onSelect={id => { setSelectedId(id); audio.selectMonster(id); }} onRace={() => startRace(selectedId)} onBack={() => setPhase('title')} />}
         {phase === 'race' && (
           <>
             <HUD key={raceVersion} raceRef={raceRef} pausedRef={pausedRef} />
-            <TouchControls touchRef={touchRef} />
+            <TouchControls touchRef={touchRef} onItem={() => useItem(raceRef.current)} />
           </>
         )}
-        {phase === 'results' && <ResultsScreen results={results} playerId={selectedId} onAgain={() => startRace(selectedId)} onChange={() => setPhase('select')} onMenu={toMenu} />}
+        {phase === 'results' && <ResultsScreen results={results} motorClass={raceRef.current.motorClass} playerId={selectedId} onAgain={() => startRace(selectedId)} onChange={() => setPhase('select')} onMenu={toMenu} />}
         {paused && phase === 'race' && <PauseOverlay onResume={() => setPause(false)} onRestart={() => startRace(selectedId)} onMenu={toMenu} />}
         {help && <Instructions onClose={closeHelp} />}
       </div>

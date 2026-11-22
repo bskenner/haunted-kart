@@ -159,10 +159,12 @@
 .no-select { user-select: none; -webkit-user-select: none; touch-action: manipulation; }
 canvas { touch-action: none; }
 input[type="range"] { touch-action: pan-x; }
+@keyframes item-reel { from { transform: translateY(-3px); filter: brightness(1.6); } to { transform: translateY(3px); filter: brightness(1); } }
+.item-roulette { animation: item-reel .1s linear infinite alternate; }
 .title-screen { pointer-events: auto; }
 .title-screen > div { flex-shrink: 0; }
 @media (max-height: 700px) {
-  .title-screen .logo-text { font-size: clamp(4.5rem, 18vh, 7rem); }
+  .title-screen .logo-text { font-size: clamp(3.5rem, 15vh, 6rem); }
 }
 @media (max-height: 560px) {
   .title-screen > div:first-child { margin-top: 0; }
