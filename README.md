@@ -28,7 +28,7 @@ Corrida de **3 voltas**, com minimapa, aviso de contramão e redução de veloci
 
 ### Largada especial
 
-Na contagem 3-2-1-Vai, comece a acelerar com a **seta para cima** logo depois de aparecer o **1** e segure até o **Vai!** para ganhar um impulso de largada. Acelerar cedo demais faz o motor engasgar.
+Na contagem 3-2-1-Vai, comece a acelerar com a **seta para cima** logo depois de aparecer o **1** e segure até o **Vai!** para ganhar um impulso de largada. Se você segurar o acelerador desde o 3, o kart sai normalmente no verde — só não ganha o turbo extra.
 
 ### Dificuldade e velocidade do motor
 
@@ -43,9 +43,9 @@ O esquema principal usa as setas e o espaço:
 
 | Tecla | Ação |
 | ----- | ---- |
-| Seta para cima (ou W) | Acelerar |
+| Seta para cima (ou W) | Acelerar na hora e enquanto estiver pressionada |
 | Seta para baixo (ou S) | Frear e, se estiver parado, ré |
-| Setas laterais (ou A / D) | Virar |
+| Setas laterais (ou A / D) | Virar: esquerda vai para a esquerda da tela, direita para a direita (visão da câmera atrás do kart) |
 | Espaço | Usar o poder, depois da roleta do item |
 | Shift (esquerdo ou direito; ou Z / X) | Pular e derrapar: faíscas azuis → laranjas; solte para turbinar |
 | Esc ou P | Pausar |
@@ -95,6 +95,12 @@ npm test        # testes da lógica da corrida
 npm run build   # gerar a versão de produção
 npm run preview # servir a versão gerada
 ```
+
+## Jogar pelo GitHub Pages
+
+Além do Replit, o jogo pode ser publicado de graça pelo GitHub Pages deste repositório (Actions no ramo `main`). Depois de ativar **Settings → Pages → Source: GitHub Actions**, o endereço fica:
+
+- **https://bskenner.github.io/haunted-kart/**
 
 ## Observações
 
