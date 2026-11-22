@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { useEffect, useState, type MutableRefObject, type ReactNode } from 'react';
 import { Bone, ChevronLeft, ChevronRight, FlaskConical, Ghost, HelpCircle, Pause, Play, RotateCcw, Users, Volume2, VolumeX, X, Home, Flag, Zap } from 'lucide-react';
-import { CHARACTERS, ITEMS, TRACK_LENGTH, formatTime, type Input, type RaceResult, type RaceState } from './engine';
-import { audio } from './audio';
+import { CHARACTERS, ITEMS, TRACK_LENGTH, driftTier, formatTime, useItem, type Input, type RaceResult, type RaceState } from './engine';
+import { SoundControls } from './SoundControls';
+import { Minimap } from './Minimap';
 
 const LAPS = 3;
 
@@ -32,7 +33,7 @@ export function TopBar({ muted, onMute, onHelp, children }: { muted: boolean; on
 
 export function TitleScreen({ onPlay, onHelp }: { onPlay: () => void; onHelp: () => void }) {
   return (
-    <div className="absolute inset-0 z-20 flex flex-col items-center justify-between p-6 pb-10 pointer-events-none">
+    <div className="title-screen absolute inset-0 z-20 flex flex-col items-center justify-between p-6 pb-5 pointer-events-none overflow-y-auto gap-5">
       <div className="mt-[8vh] text-center rise">
         <p className="text-xs sm:text-sm tracking-[0.5em] uppercase text-purple-200/80 mb-2">Corrida de monstros sob a lua cheia</p>
         <h1 className="logo-text text-[19vw] sm:text-[9rem] leading-[0.85] flicker" data-testid="text-title">Haunted<br />Kart</h1>
@@ -40,6 +41,7 @@ export function TitleScreen({ onPlay, onHelp }: { onPlay: () => void; onHelp: ()
       <div className="flex flex-col items-center gap-4 pointer-events-auto rise" style={{ animationDelay: '.3s' }}>
         <button data-testid="button-play" onClick={onPlay} className="btn-pumpkin pulse-ring rounded-2xl px-14 py-4 text-2xl font-extrabold uppercase tracking-wider">Jogar</button>
         <button data-testid="button-instructions" onClick={onHelp} className="text-purple-200 underline underline-offset-4 decoration-orange-400/60 hover:text-orange-300">Como jogar</button>
+        <SoundControls />
         <p className="text-xs text-purple-300/60 font-mono">3 voltas no Cemitério da Colina Torta</p>
       </div>
     </div>
@@ -111,31 +113,29 @@ function rankOf(race: RaceState) {
   return order.findIndex(o => o.i === 0) + 1;
 }
 
-interface Snap { lap: number; pos: number; total: number; time: number; speed: number; lane: number; item: string | null; countdown: number; message: string; boost: boolean; drift: number }
+interface Snap {
+  lap: number; pos: number; total: number; time: number; speed: number; lane: number; item: string | null;
+  countdown: number; message: string; boost: boolean; drift: number; offroad: boolean; wrongWay: boolean;
+  pickup: boolean; used: boolean; hit: boolean; racers: { id: number; progress: number }[];
+}
 
 export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceState>; pausedRef: MutableRefObject<boolean> }) {
   const [s, setS] = useState<Snap | null>(null);
-  const lastBeep = useRef(5);
   useEffect(() => {
     const tick = () => {
       const race = raceRef.current;
       const p = race.racers[0];
-      const cd = Math.ceil(race.countdown);
-      if (cd !== lastBeep.current) {
-        lastBeep.current = cd;
-        if (cd >= 1 && cd <= 3) audio.blip(440, 0.2);
-        if (cd === 0) audio.blip(880, 0.45);
-      }
-      audio.setEngine(p.speed, race.countdown <= 0 && !race.finished && !pausedRef.current && p.finishTime === null);
       setS({
         lap: Math.min(LAPS, Math.floor(Math.max(0, p.progress) / TRACK_LENGTH) + 1),
         pos: rankOf(race), total: race.racers.length, time: p.finishTime ?? race.time, speed: p.finishTime === null ? p.speed : 0, lane: p.lane,
         item: p.item, countdown: race.countdown, message: race.messageTime > 0 ? race.message : '', boost: p.boost > 0, drift: p.drifting ? p.driftCharge : 0,
+        offroad: p.offroad, wrongWay: p.wrongWay > 0.35, pickup: p.pickupFlash > 0, used: p.useFlash > 0, hit: p.hitFlash > 0,
+        racers: race.racers.map(r => ({ id: r.id, progress: r.progress })),
       });
     };
     tick();
     const id = setInterval(tick, 100);
-    return () => { clearInterval(id); audio.setEngine(0, false); };
+    return () => { clearInterval(id); };
   }, [raceRef, pausedRef]);
   if (!s) return null;
   const item = s.item ? ITEMS.find(i => i.id === s.item) : null;
@@ -144,7 +144,9 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
   const showGo = s.countdown <= 0 && s.time < 0.8;
   return (
     <div className="absolute inset-0 z-20 pointer-events-none no-select" data-testid="race-hud"
-      data-lane={s.lane.toFixed(3)} data-drift={s.drift.toFixed(3)} data-boost={s.boost} data-item={s.item ?? ''}>
+      data-lane={s.lane.toFixed(3)} data-drift={s.drift.toFixed(3)} data-drift-tier={driftTier(s.drift)} data-offroad={s.offroad} data-boost={s.boost} data-item={s.item ?? ''}>
+      {s.hit && <div className="absolute inset-0 bg-red-500/15 border-4 border-red-400/40" />}
+      {s.used && <div className="absolute inset-0 border-4 border-violet-300/40 shadow-[inset_0_0_60px_#9b65dc33]" />}
       <div className="absolute top-3 left-3 flex gap-2 items-start">
         <div className="panel rounded-2xl px-4 py-2 text-center">
           <div className="text-[10px] uppercase tracking-[0.3em] text-purple-300">Posição</div>
@@ -156,16 +158,24 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
           <div className="font-mono text-sm text-orange-200" data-testid="text-timer">{formatTime(s.time)}</div>
         </div>
       </div>
-      <div className="absolute top-[4.5rem] right-3 md:top-16 panel rounded-2xl w-20 h-20 grid place-items-center" data-testid="status-item" style={{ borderColor: item?.color }}>
+      <button type="button" onClick={() => useItem(raceRef.current)} aria-label={item ? `Usar ${item.name}` : 'Sem item'}
+        className={`absolute top-[4.5rem] right-3 md:top-16 panel rounded-2xl w-20 h-20 grid place-items-center pointer-events-auto transition-transform ${s.pickup ? 'scale-110 ring-4 ring-orange-300/70' : ''}`}
+        data-testid="status-item" style={{ borderColor: item?.color }}>
         {item ? <div className="flex flex-col items-center" style={{ color: item.color }}><ItemIcon id={item.id} className="w-9 h-9" /><span className="text-[9px] uppercase tracking-wider mt-0.5 text-center leading-tight px-1">{item.name}</span></div>
           : <span className="text-[10px] uppercase tracking-widest text-purple-400/70">Sem item</span>}
-      </div>
+      </button>
+      <Minimap racers={s.racers} />
       <div className="race-speed absolute bottom-4 left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 text-center md:text-right">
         <div className={`font-mono font-bold text-4xl md:text-5xl leading-none ${s.boost ? 'text-cyan-200' : 'text-orange-100'}`} data-testid="text-speed">{Math.round(Math.abs(s.speed) * 3.6)}</div>
         <div className="text-[10px] uppercase tracking-[0.3em] text-purple-300">km/h</div>
-        {s.drift > 0 && <div className="mt-1 h-1.5 w-28 rounded-full bg-purple-950 overflow-hidden ml-auto mr-auto md:mr-0"><div className="h-full" style={{ width: `${Math.min(100, s.drift * 50)}%`, background: s.drift > 1.6 ? '#ff7a1a' : '#c78bff' }} /></div>}
+        {s.drift > 0 && <div className="mt-2">
+          <div className="text-[10px] font-bold mb-1" style={{ color: driftTier(s.drift) === 2 ? '#ff9b37' : '#58cfff' }}>{driftTier(s.drift) === 2 ? 'SUPERTURBO' : driftTier(s.drift) === 1 ? 'TURBO AZUL' : 'CARREGANDO TURBO'}</div>
+          <div className="h-2 w-28 rounded-full bg-purple-950 overflow-hidden ml-auto mr-auto md:mr-0"><div className="h-full" style={{ width: `${Math.min(100, s.drift / 1.5 * 100)}%`, background: driftTier(s.drift) === 2 ? '#ff9b37' : '#58cfff' }} /></div>
+        </div>}
+        {s.offroad && <div className="text-xs text-orange-200 font-bold mt-1" data-testid="warning-offroad">Fora da pista!</div>}
       </div>
       {s.message && <div key={s.message} className="absolute top-[30%] left-1/2 -translate-x-1/2 panel rounded-2xl px-5 py-2 text-orange-200 font-semibold rise w-max max-w-[90vw] text-center" data-testid="text-message">{s.message}</div>}
+      {s.wrongWay && <div role="alert" data-testid="warning-wrong-way" className="absolute top-[43%] left-1/2 -translate-x-1/2 panel rounded-2xl px-5 py-3 text-orange-200 font-extrabold w-max max-w-[90vw] text-center">Contramão!<span className="block text-xs font-normal">Acelere para seguir na direção certa.</span></div>}
       {showCd && !showGo && <div key={cdNum} className="absolute inset-0 grid place-items-center"><span className="logo-text text-[9rem] md:text-[13rem] pop" data-testid="text-countdown">{cdNum}</span></div>}
       {showGo && <div className="absolute inset-0 grid place-items-center"><span className="logo-text text-[8rem] md:text-[12rem] pop" style={{ color: '#9be255' }}>Vai!</span></div>}
     </div>
@@ -256,10 +266,11 @@ export function PauseButton({ onClick }: { onClick: () => void }) {
 
 export function PauseOverlay({ onResume, onRestart, onMenu }: { onResume: () => void; onRestart: () => void; onMenu: () => void }) {
   return (
-    <div className="absolute inset-0 z-40 grid place-items-center bg-[#12081f]/70 backdrop-blur-sm p-4">
-      <div className="panel rounded-3xl p-6 w-full max-w-xs text-center rise">
+    <div className="absolute inset-0 z-40 flex items-start justify-center bg-[#12081f]/70 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="panel rounded-3xl p-6 w-full max-w-xs text-center rise my-auto">
         <h2 className="logo-text text-5xl mb-4">Pausa</h2>
         <div className="flex flex-col gap-2">
+          <SoundControls />
           <button data-testid="button-resume" onClick={onResume} className="btn-pumpkin rounded-2xl py-3 font-extrabold uppercase flex items-center justify-center gap-2"><Play className="w-4 h-4" /> Continuar</button>
           <button data-testid="button-restart" onClick={onRestart} className="btn-ghost rounded-2xl py-3 font-semibold">Reiniciar corrida</button>
           <button data-testid="button-quit" onClick={onMenu} className="btn-ghost rounded-2xl py-3 font-semibold">Sair para o menu</button>
@@ -271,8 +282,8 @@ export function PauseOverlay({ onResume, onRestart, onMenu }: { onResume: () => 
 
 export function Instructions({ onClose }: { onClose: () => void }) {
   const rows: [string, string][] = [
-    ['W / Seta para cima', 'Acelerar'], ['S / Seta para baixo', 'Frear'], ['A D / Setas laterais', 'Virar'],
-    ['Espaço', 'Derrapar (segure na curva para ganhar turbo)'], ['E', 'Usar item'], ['Esc / P', 'Pausar'],
+    ['W / Seta para cima', 'Acelerar'], ['S / Seta para baixo', 'Frear; segure parado para dar ré'], ['A D / Setas laterais', 'Virar'],
+    ['Espaço', 'Derrapar: faíscas azuis → laranjas; solte para turbinar'], ['E', 'Usar item'], ['Esc / P', 'Pausar'],
   ];
   return (
     <div className="absolute inset-0 z-50 flex items-start justify-center bg-[#12081f]/75 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
@@ -280,6 +291,7 @@ export function Instructions({ onClose }: { onClose: () => void }) {
         <button onClick={onClose} aria-label="Fechar" data-testid="button-close-help" className="absolute top-4 right-4 btn-ghost rounded-xl w-9 h-9 grid place-items-center"><X className="w-4 h-4" /></button>
         <h2 className="logo-text text-5xl mb-1">Como jogar</h2>
         <p className="text-purple-200 text-sm mb-4">Três voltas pelo cemitério. Pegue as caixas roxas, solte as maldições e cruze a linha antes dos outros monstros.</p>
+        <p className="text-orange-200 text-sm mb-4">Largada especial: comece a acelerar logo depois de aparecer o 1 e segure até o Vai! Acelerar cedo demais faz o motor engasgar.</p>
         <div className="mouse-only space-y-1.5 mb-4">
           {rows.map(([k, v]) => (
             <div key={k} className="flex justify-between gap-3 text-sm border-b border-purple-800/50 pb-1.5"><span className="font-mono text-orange-300">{k}</span><span className="text-right text-purple-100">{v}</span></div>

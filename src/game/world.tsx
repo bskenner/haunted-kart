@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { trackPoint } from './engine';
+import { StaticScenery } from './StaticScenery';
 
 export const HALF = 6;
 type S = { x: number; y: number; z: number; angle: number };
@@ -415,7 +416,7 @@ function Fog() {
   const td = getTrackData();
   const geo = useMemo(() => {
     const r = rng(99);
-    const n = 160;
+    const n = 90;
     const pos = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
       pos[i * 3] = td.minX - 40 + r() * (td.maxX - td.minX + 80);
@@ -450,7 +451,7 @@ function Fog() {
   return (
     <>
       <points ref={fogRef} geometry={geo}>
-        <pointsMaterial map={tex} size={22} color="#b9a3e6" transparent opacity={0.13} depthWrite={false} sizeAttenuation />
+        <pointsMaterial map={tex} size={16} color="#b9a3e6" transparent opacity={0.13} depthWrite={false} sizeAttenuation />
       </points>
       <points ref={wispRef} geometry={wisps}>
         <pointsMaterial map={tex} size={0.9} color="#ffb04a" transparent opacity={0.9} depthWrite={false} blending={THREE.AdditiveBlending} sizeAttenuation />
@@ -481,16 +482,18 @@ export function World() {
       <hemisphereLight args={['#8d6bff', '#2a0f24', 0.85]} />
       <ambientLight intensity={0.25} color="#b3a0ff" />
       <directionalLight position={[-140, 95, -210]} intensity={1.6} color="#d6ddff" />
-      <Stars radius={260} depth={40} count={1400} factor={5} saturation={0.4} fade speed={0.4} />
+      <Stars radius={260} depth={40} count={700} factor={5} saturation={0.4} fade speed={0.4} />
       <Moon />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[td.center.x, td.groundY, td.center.z]}>
         <circleGeometry args={[td.span * 1.4 + 80, 48]} />
         <meshStandardMaterial color="#251a3a" roughness={1} />
       </mesh>
       <Track />
-      <Scatter />
-      <Castle />
-      <Chapel />
+      <StaticScenery>
+        <Scatter />
+        <Castle />
+        <Chapel />
+      </StaticScenery>
       <Bats />
       <Fog />
     </>

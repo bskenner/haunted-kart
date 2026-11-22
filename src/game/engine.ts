@@ -62,7 +62,17 @@ export interface Racer {
   id: number; progress: number; lane: number; speed: number; boost: number; shield: number;
   spin: number; slow: number; driftCharge: number; drifting: boolean; item: string | null;
   finishTime: number | null;
+  lateralSpeed: number; steering: number; boostPower: number; offroad: boolean;
+  wallCooldown: number; reverseHold: number; wrongWay: number; stumble: number;
+  pickupFlash: number; useFlash: number; hitFlash: number;
 }
+export type EventKind = 'countdown' | 'pickup' | 'use' | 'hit' | 'shield' | 'boost' | 'tier' | 'wall' | 'lap' | 'finalLap' | 'finish' | 'launch' | 'stumble';
+export interface RaceEvent { seq: number; type: EventKind; value?: number; item?: string }
+export const DRIFT_BLUE = 0.55;
+export const DRIFT_ORANGE = 1.5;
+export const ROAD_EDGE = 5.05;
+export const WALL_EDGE = 6.15;
+export const driftTier = (charge: number) => charge >= DRIFT_ORANGE ? 2 : charge >= DRIFT_BLUE ? 1 : 0;
 export interface RaceResult { id: number; time: number; position: number; estimated: boolean }
 export interface ItemBox { t: number; lane: number; cooldown: number }
 export interface Hazard { t: number; lane: number; life: number; owner: number }
@@ -72,6 +82,16 @@ export interface RaceState {
   boxes: ItemBox[]; hazards: Hazard[]; projectiles: Projectile[]; message: string; messageTime: number;
   /** Internal state belongs to each race, so restarting resets every cooldown. */
   aiTimers: number[]; itemHeld: boolean;
+  events: RaceEvent[]; eventSeq: number; throttleHeld: boolean; launchAt: number | null;
+}
+function emit(race: RaceState, type: EventKind, value?: number, item?: string) {
+  race.events.push({ seq: ++race.eventSeq, type, value, item });
+  if (race.events.length > 48) race.events.shift();
+}
+function boost(race: RaceState, racer: Racer, duration: number, power: number, tier = 0) {
+  racer.boost = Math.max(racer.boost, duration);
+  racer.boostPower = Math.max(racer.boostPower, power);
+  if (racer === race.racers[0]) emit(race, 'boost', tier);
 }
 export function createRace(characterId: number): RaceState {
   const ids = [characterId, ...CHARACTERS.filter(c => c.id !== characterId).map(c => c.id)];
@@ -80,10 +100,13 @@ export function createRace(characterId: number): RaceState {
       id, progress: i < 2 ? 0 : -Math.floor(i / 2) * 3.5, lane: i % 2 === 0 ? -1.6 : 1.6,
       speed: 0, boost: 0, shield: 0, spin: 0, slow: 0, driftCharge: 0, drifting: false,
       item: null, finishTime: null,
+      lateralSpeed: 0, steering: 0, boostPower: 1, offroad: false, wallCooldown: 0,
+      reverseHold: 0, wrongWay: 0, stumble: 0, pickupFlash: 0, useFlash: 0, hitFlash: 0,
     })),
     time: 0, countdown: 3, finished: false, results: [], hazards: [], projectiles: [],
     boxes: [0.12, 0.36, 0.61, 0.84].flatMap(t => [-3.4, 0, 3.4].map(lane => ({ t, lane, cooldown: 0 }))),
     message: '', messageTime: 0, aiTimers: ids.map((_, i) => 7 + i * 1.8), itemHeld: false,
+    events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null,
   };
 }
 function announce(race: RaceState, message: string) {
@@ -94,21 +117,29 @@ function hit(race: RaceState, racer: Racer, spin: boolean) {
   if (racer.finishTime !== null) return;
   if (racer.shield > 0) {
     racer.shield = 0;
-    if (racer === race.racers[0]) announce(race, 'Seu escudo bloqueou o ataque!');
+    if (racer === race.racers[0]) { announce(race, 'Seu escudo bloqueou o ataque!'); emit(race, 'shield'); }
     return;
   }
   if (racer.spin > 0 || racer.slow > 1) return;
   if (spin) { racer.spin = 1.4; racer.speed *= 0.35; }
   else { racer.slow = 2.6; racer.speed *= 0.65; }
-  if (racer === race.racers[0]) announce(race, spin ? 'Você rodou! Acelere para recuperar.' : 'Morcegos! Você perdeu velocidade.');
+  racer.hitFlash = 0.5;
+  if (racer === race.racers[0]) {
+    emit(race, 'hit', spin ? 1 : 0);
+    announce(race, spin ? 'Você rodou! Acelere para recuperar.' : 'Morcegos! Você perdeu velocidade.');
+  }
 }
 export function useItem(race: RaceState, racerIndex = 0) {
   const racer = race.racers[racerIndex];
   if (!racer || !racer.item || race.countdown > 0 || race.finished || racer.finishTime !== null) return;
   const item = racer.item;
   racer.item = null;
-  if (racerIndex === 0) announce(race, ITEMS.find(i => i.id === item)?.name ?? '');
-  if (item === 'ghost') racer.boost = 2.5;
+  racer.useFlash = 0.7;
+  if (racerIndex === 0) {
+    announce(race, `Poder ativado: ${ITEMS.find(i => i.id === item)?.name ?? ''}`);
+    emit(race, 'use', undefined, item);
+  }
+  if (item === 'ghost') boost(race, racer, 2.5, 1.48);
   if (item === 'bones') racer.shield = 6;
   if (item === 'bats') {
     race.racers.filter(r => r.progress > racer.progress && r !== racer).forEach(r => hit(race, r, false));
@@ -138,7 +169,23 @@ export function updateRace(race: RaceState, delta: number, input: Input) {
 function stepRace(race: RaceState, dt: number, input: Input) {
   if (race.finished) return;
   if (race.countdown > 0) {
+    if (input.accelerate && !race.throttleHeld) race.launchAt = race.countdown;
+    if (!input.accelerate) race.launchAt = null;
+    race.throttleHeld = input.accelerate;
+    const before = Math.ceil(race.countdown);
     race.countdown = Math.max(0, race.countdown - dt);
+    if (Math.ceil(race.countdown) !== before) emit(race, 'countdown', Math.ceil(race.countdown));
+    if (race.countdown === 0 && input.accelerate && race.launchAt !== null) {
+      if (race.launchAt >= 0.35 && race.launchAt <= 0.95) {
+        boost(race, race.racers[0], 1.25, 1.4);
+        announce(race, 'Largada monstruosa! Turbo!');
+        emit(race, 'launch');
+      } else if (race.launchAt > 1.8) {
+        race.racers[0].stumble = 0.5;
+        announce(race, 'O motor engasgou! Acelere no 1 para ganhar turbo.');
+        emit(race, 'stumble');
+      }
+    }
     return;
   }
   race.time += dt;
@@ -146,14 +193,22 @@ function stepRace(race: RaceState, dt: number, input: Input) {
   race.boxes.forEach(box => { box.cooldown = Math.max(0, box.cooldown - dt); });
   if (input.item && !race.itemHeld) useItem(race);
   race.itemHeld = input.item;
+  const sortedProgress = race.racers.map(r => r.progress).sort((a, b) => b - a);
+  const pack = sortedProgress[2];
   race.racers.forEach((racer, index) => {
     if (racer.finishTime !== null) return;
     const stats = CHARACTERS[racer.id];
     const prevProgress = racer.progress;
     racer.boost = Math.max(0, racer.boost - dt);
+    if (racer.boost === 0) racer.boostPower = 1;
     racer.shield = Math.max(0, racer.shield - dt);
     racer.spin = Math.max(0, racer.spin - dt);
     racer.slow = Math.max(0, racer.slow - dt);
+    racer.wallCooldown = Math.max(0, racer.wallCooldown - dt);
+    racer.stumble = Math.max(0, racer.stumble - dt);
+    racer.pickupFlash = Math.max(0, racer.pickupFlash - dt);
+    racer.useFlash = Math.max(0, racer.useFlash - dt);
+    racer.hitFlash = Math.max(0, racer.hitFlash - dt);
     const t = racer.progress / TRACK_LENGTH;
     const p = trackPoint(t);
     const ahead = trackPoint(t + 0.014);
@@ -162,50 +217,100 @@ function stepRace(race: RaceState, dt: number, input: Input) {
     let throttle = index === 0 ? input.accelerate : true;
     const braking = index === 0 && input.brake;
     const steering = index === 0 ? Number(input.left) - Number(input.right) : 0;
-    const drifting = index === 0 && input.drift && steering !== 0 && racer.speed > 8 && Math.abs(curve) > 0.012;
+    const drifting = index === 0 && input.drift && steering !== 0 && racer.speed > 8 && racer.spin === 0 && !racer.offroad;
     if (index > 0) {
-      // Modest pace variation and bounded catch-up keep the grid competitive without teleporting.
-      const gap = clamp((race.racers[0].progress - racer.progress) / 100, -1, 1);
-      maxSpeed *= 0.9 + 0.035 * Math.sin(race.time * 0.37 + index * 2) + 0.06 * gap;
-      maxSpeed *= 1 - Math.min(0.2, Math.abs(curve) * 0.65);
-      let targetLane = Math.sin(race.time * 0.22 + index * 1.7) * 2.8;
-      const nearbyBox = race.boxes.find(b => b.cooldown <= 0 && wrap(b.t - t) * TRACK_LENGTH < 15);
-      if (!racer.item && nearbyBox) targetLane = nearbyBox.lane;
-      racer.lane += clamp(targetLane - racer.lane, -2.2 * dt, 2.2 * dt);
+      // Bounded +/- adjustments around the middle of the field, not teleports
+      // or a hidden speed penalty targeting only the human player.
+      const catchup = clamp((pack - racer.progress) / 150, -0.035, 0.07);
+      maxSpeed *= 0.93 + 0.018 * Math.sin(race.time * 0.37 + index * 2) + catchup;
+      maxSpeed *= 1 - Math.min(0.16, Math.abs(curve) * 0.6);
+      let targetLane = Math.sin(index * 2.3) * 2.5 - clamp(curve * 9, -1.1, 1.1);
+      let nearest = 26;
+      if (!racer.item) for (const box of race.boxes) {
+        const distance = wrap(box.t - t) * TRACK_LENGTH;
+        if (box.cooldown <= 0 && distance < nearest && distance > 1) {
+          nearest = distance;
+          targetLane = box.lane;
+        }
+      }
+      for (const hazard of race.hazards) {
+        if (wrap(hazard.t - t) * TRACK_LENGTH < 18 && Math.abs(hazard.lane - racer.lane) < 2)
+          targetLane = hazard.lane > 0 ? -2.8 : 2.8;
+      }
+      for (const other of race.racers) {
+        const distance = other.progress - racer.progress;
+        if (other !== racer && distance > 0 && distance < 9 && other.speed < racer.speed && Math.abs(other.lane - racer.lane) < 1.8)
+          targetLane = other.lane > 0 ? other.lane - 2.7 : other.lane + 2.7;
+      }
+      racer.lane += clamp(clamp(targetLane, -3.8, 3.8) - racer.lane, -3.5 * dt, 3.5 * dt);
       race.aiTimers[index] -= dt;
       if (race.aiTimers[index] <= 0) {
-        if (racer.item) useItem(race, index);
-        race.aiTimers[index] = 5 + Math.random() * 6;
+        const ahead = race.racers.some(r => r !== racer && r.progress > racer.progress && r.progress - racer.progress < 60 && r.finishTime === null);
+        const behind = race.racers.some(r => r !== racer && racer.progress - r.progress > 0 && racer.progress - r.progress < 24);
+        const useful = racer.item === 'ghost' || racer.item === 'bones' || (racer.item === 'slime' ? behind : ahead);
+        if (racer.item && useful) useItem(race, index);
+        race.aiTimers[index] = 2.5 + Math.random() * 3.5;
       }
     } else {
       // Positive lane follows the track's right normal; a left input reduces lane.
-      const lateralSpeed = (2 + stats.handling * 0.38) * (drifting ? 1.32 : 1);
-      racer.lane -= steering * lateralSpeed * dt * Math.min(1, racer.speed / 8);
-      racer.lane -= curve * racer.speed * dt * (drifting ? 0.55 : 0.85) * (11 - stats.handling) * 0.18;
-      // Keep the whole kart on the pavement, inside the raised curbs and fences.
-      racer.lane = clamp(racer.lane, -4.8, 4.8);
-      if (Math.abs(racer.lane) > 4.5) {
-        maxSpeed *= 0.86;
-        // Releasing the steering gently recovers from a curb instead of leaving
-        // a slower racer permanently stranded outside the road.
-        if (steering === 0) racer.lane -= Math.sign(racer.lane) * 1.8 * dt;
+      racer.steering += (-steering - racer.steering) * (1 - Math.exp(-22 * dt));
+      let lateralTarget = -steering * (3.6 + stats.handling * 0.26) * Math.min(1, Math.abs(racer.speed) / 7);
+      if (drifting) {
+        lateralTarget *= 0.5;
+        // Drift steering follows the bend without constantly sliding into fences.
+        if (Math.abs(racer.lane) > 3.9 && Math.sign(lateralTarget) === Math.sign(racer.lane)) lateralTarget *= 0.06;
       }
-      if (drifting) racer.driftCharge = Math.min(2.5, racer.driftCharge + dt);
+      if (racer.spin > 0) lateralTarget = 0;
+      racer.lateralSpeed += (lateralTarget - racer.lateralSpeed) * (1 - Math.exp(-(drifting ? 7 : 22) * dt));
+      if (!steering && Math.abs(racer.lane) > ROAD_EDGE) racer.lateralSpeed -= Math.sign(racer.lane) * 9 * dt;
+      racer.lane += racer.lateralSpeed * dt;
+      if (Math.abs(racer.lane) >= WALL_EDGE) {
+        const side = Math.sign(racer.lane);
+        racer.lane = side * (WALL_EDGE - 0.06);
+        racer.lateralSpeed = -side * Math.max(1.8, Math.abs(racer.lateralSpeed) * 0.45);
+        if (racer.wallCooldown === 0) {
+          racer.speed *= 0.88;
+          racer.wallCooldown = 0.55;
+          emit(race, 'wall');
+        }
+      }
+      racer.offroad = Math.abs(racer.lane) > ROAD_EDGE;
+      if (racer.offroad) maxSpeed *= 0.53;
+      const oldTier = driftTier(racer.driftCharge);
+      if (drifting) racer.driftCharge = Math.min(3, racer.driftCharge + dt);
+      if (driftTier(racer.driftCharge) > oldTier) emit(race, 'tier', driftTier(racer.driftCharge));
       if (racer.drifting && !drifting) {
-        if (racer.driftCharge > 0.45) {
-          racer.boost = 0.6 + racer.driftCharge * 0.6;
-          announce(race, 'Derrapagem perfeita! Impulso!');
+        const tier = driftTier(racer.driftCharge);
+        if (tier && racer.spin === 0 && !racer.offroad) {
+          boost(race, racer, tier === 2 ? 1.7 : 0.9, tier === 2 ? 1.46 : 1.24, tier);
+          announce(race, tier === 2 ? 'Super miniturbo! Impulso máximo!' : 'Miniturbo! Impulso azul!');
         }
         racer.driftCharge = 0;
       }
       racer.drifting = drifting;
     }
-    if (racer.boost > 0) maxSpeed *= 1.42;
+    if (racer.boost > 0) maxSpeed *= racer.boostPower;
     if (racer.slow > 0) maxSpeed *= 0.58;
-    if (racer.spin > 0) { maxSpeed *= 0.2; throttle = false; }
-    if (throttle && !braking) racer.speed = Math.min(maxSpeed, racer.speed + (6 + stats.acceleration * 1.25) * (racer.boost > 0 ? 1.8 : 1) * dt);
-    else racer.speed = Math.max(0, racer.speed - (braking ? 26 : 5) * dt);
-    if (racer.speed > maxSpeed) racer.speed = Math.max(maxSpeed, racer.speed - 18 * dt);
+    if (racer.spin > 0 || racer.stumble > 0) { maxSpeed *= 0.2; throttle = false; }
+    if (braking) {
+      if (racer.speed > 0) racer.speed = Math.max(0, racer.speed - 28 * dt);
+      if (!input.accelerate && racer.speed <= 0) {
+        racer.reverseHold += dt;
+        if (racer.reverseHold > 0.65) racer.speed = Math.max(-7, racer.speed - 9 * dt);
+      } else racer.reverseHold = 0;
+    } else {
+      racer.reverseHold = 0;
+      if (throttle) {
+        const curve = 0.58 + 0.42 * (1 - clamp(racer.speed / maxSpeed, 0, 1));
+        const acceleration = (7 + stats.acceleration * 1.5) * curve * (racer.boost > 0 ? 2 : 1);
+        racer.speed = racer.speed < maxSpeed ? Math.min(maxSpeed, racer.speed + acceleration * dt)
+          : Math.max(maxSpeed, racer.speed - (racer.offroad ? 24 : 12) * dt);
+      } else {
+        const drag = (racer.spin > 0 ? 18 : 5) * dt;
+        racer.speed = Math.sign(racer.speed) * Math.max(0, Math.abs(racer.speed) - drag);
+      }
+    }
+    racer.wrongWay = racer.speed < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
     racer.progress += racer.speed * dt;
     for (const box of race.boxes) {
       // Crossing test avoids skipping a box at low frame rates.
@@ -215,7 +320,11 @@ function stepRace(race: RaceState, dt: number, input: Input) {
       if (box.cooldown === 0 && !racer.item && crossed && Math.abs(racer.lane - box.lane) < 1.7) {
         racer.item = ITEMS[Math.floor(Math.random() * ITEMS.length)].id;
         box.cooldown = 4;
-        if (index === 0) announce(race, `${ITEMS.find(i => i.id === racer.item)!.name} — use E ou toque no item`);
+        racer.pickupFlash = 0.8;
+        if (index === 0) {
+          emit(race, 'pickup', undefined, racer.item);
+          announce(race, `${ITEMS.find(i => i.id === racer.item)!.name} — E ou botão Item`);
+        }
       }
     }
     for (const hazard of race.hazards) {
@@ -227,6 +336,13 @@ function stepRace(race: RaceState, dt: number, input: Input) {
     if (racer.progress >= TRACK_LENGTH * 3) {
       racer.finishTime = race.time - (racer.progress - TRACK_LENGTH * 3) / Math.max(1, racer.speed);
       racer.progress = TRACK_LENGTH * 3;
+      if (index === 0) emit(race, 'finish');
+    } else if (index === 0) {
+      const lap = Math.floor(racer.progress / TRACK_LENGTH);
+      if (lap > Math.floor(prevProgress / TRACK_LENGTH) && lap > 0) {
+        emit(race, lap === 2 ? 'finalLap' : 'lap', lap + 1);
+        announce(race, lap === 2 ? 'Última volta! Assombre a concorrência!' : 'Volta 2! A corrida continua!');
+      }
     }
   });
   for (const projectile of race.projectiles) {
