@@ -212,7 +212,8 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
     } else if (phase === 'race') {
       const r = race.racers[0];
       const pose = place(r.progress, r.lane, _p);
-      const fx = Math.sin(pose.angle), fz = Math.cos(pose.angle);
+      const yaw = pose.angle + r.steering * 0.18;
+      const fx = Math.sin(yaw), fz = Math.cos(yaw);
       const back = (size.width < 768 ? 10 : 8.5) + (race.motorClass === 'turbo' ? 0.5 : 0);
       target.set(_p.x - fx * back, _p.y + 4.2, _p.z - fz * back);
       const lookAhead = race.motorClass === 'turbo' ? 7.2 : 6;

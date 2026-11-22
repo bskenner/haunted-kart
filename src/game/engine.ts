@@ -57,6 +57,35 @@ export function trackPoint(t: number) {
   return { ...p, angle: Math.atan2(ahead.x - behind.x, ahead.z - behind.z) };
 }
 
+
+/** World position of a kart on the track, matching the in-game placement. */
+export function kartPosition(progress: number, lane: number) {
+  const p = trackPoint(progress / TRACK_LENGTH);
+  return { x: p.x + Math.cos(p.angle) * lane, y: p.y, z: p.z - Math.sin(p.angle) * lane, angle: p.angle };
+}
+
+/**
+ * Camera-space X of a kart, using the same Three.js chase-camera lookAt as the game
+ * (camera behind the kart, looking forward). Positive is the right side of the screen.
+ * The optional cameraLane pins the camera to a reference lane so a steer can be judged
+ * against the view the player actually had.
+ */
+export function chaseCameraScreenX(progress: number, lane: number, cameraLane = 0) {
+  const origin = kartPosition(progress, cameraLane);
+  const kart = kartPosition(progress, lane);
+  const fx = Math.sin(origin.angle), fz = Math.cos(origin.angle);
+  const eye = { x: origin.x - fx * 8.5, y: origin.y + 4.2, z: origin.z - fz * 8.5 };
+  const target = { x: origin.x + fx * 6, y: origin.y + 1.2, z: origin.z + fz * 6 };
+  const zx = eye.x - target.x, zy = eye.y - target.y, zz = eye.z - target.z;
+  const zlen = Math.hypot(zx, zy, zz) || 1;
+  const z = { x: zx / zlen, y: zy / zlen, z: zz / zlen };
+  // Three.js lookAt: camera X = normalize(up × z), up = (0, 1, 0).
+  let xx = z.z, xy = 0, xz = -z.x;
+  const xlen = Math.hypot(xx, xy, xz) || 1;
+  xx /= xlen; xy /= xlen; xz /= xlen;
+  return (kart.x - eye.x) * xx + (kart.y - eye.y) * xy + (kart.z - eye.z) * xz;
+}
+
 export interface Input {
   accelerate: boolean; brake: boolean; left: boolean; right: boolean; drift: boolean; item: boolean;
 }
@@ -187,11 +216,8 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         boost(race, race.racers[0], 1.25, 1.4);
         announce(race, 'Largada monstruosa! Turbo!');
         emit(race, 'launch');
-      } else if (race.launchAt > 1.8) {
-        race.racers[0].stumble = 0.5;
-        announce(race, 'O motor engasgou! Acelere no 1 para ganhar turbo.');
-        emit(race, 'stumble');
       }
+      // Early or late throttle simply misses the turbo; the kart still accelerates on green.
     }
     return;
   }
@@ -238,7 +264,7 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         racer.hop = 0.3; emit(race, 'hop');
       }
       if (canDrift && !racer.driftDirection && steering) {
-        racer.driftDirection = -steering;
+        racer.driftDirection = steering;
         racer.hop = 0.3;
       }
       racer.driftHeld = input.drift;
@@ -291,18 +317,22 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         race.aiTimers[index] = (2.2 + Math.random() * 2.8) * difficulty.aggression;
       }
     } else {
-      // Positive lane follows the track's right normal; a left input reduces lane.
+      // In the Three.js chase camera, a positive lane sits on the LEFT of the screen.
+      // Left input is +steering: it increases lane, yaws with positive rotation.y, and goes screen-left.
       const stability = 1 - 0.32 * clamp((Math.abs(racer.speed) / motor.speed - 12) / 24, 0, 1);
-      racer.steering += (-steering - racer.steering) * (1 - Math.exp(-28 * motor.grip * dt));
-      let lateralTarget = -steering * (3.6 + stats.handling * 0.26) * motor.steering * stability * Math.min(1, Math.abs(racer.speed) / 2.5);
+      const steerRate = 1 - Math.exp(-dt / (steering ? 0.1 : 0.04) * motor.grip);
+      racer.steering += (steering - racer.steering) * steerRate;
+      const speedFeel = Math.min(1, 0.45 + Math.abs(racer.speed) / 3.5);
+      let lateralTarget = steering * (3.6 + stats.handling * 0.26) * motor.steering * stability * speedFeel;
       if (drifting) {
-        const arc = -steering === racer.driftDirection ? 1.05 : steering ? 0.18 : 0.5;
+        const arc = steering === racer.driftDirection ? 1.05 : steering ? 0.18 : 0.5;
         lateralTarget = racer.driftDirection * (2 + stats.handling * 0.08) * arc * motor.steering;
         // Drift steering follows the bend without constantly sliding into fences.
         if (Math.abs(racer.lane) > 3.9 && Math.sign(lateralTarget) === Math.sign(racer.lane)) lateralTarget *= 0.06;
       }
       if (racer.spin > 0) lateralTarget = 0;
-      racer.lateralSpeed += (lateralTarget - racer.lateralSpeed) * (1 - Math.exp(-(drifting ? 9 : 28) * motor.grip * dt));
+      const latRate = drifting ? 9 : steering ? 14 : 28;
+      racer.lateralSpeed += (lateralTarget - racer.lateralSpeed) * (1 - Math.exp(-latRate * motor.grip * dt));
       if (!steering && Math.abs(racer.lane) > ROAD_EDGE) racer.lateralSpeed -= Math.sign(racer.lane) * 9 * dt;
       racer.lane += racer.lateralSpeed * dt;
       if (Math.abs(racer.lane) >= WALL_EDGE) {

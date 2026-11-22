@@ -69,6 +69,21 @@ export default function HauntedKart() {
     audio.setScene(phase === 'race' ? 'race' : phase === 'results' ? 'results' : 'menu');
   }, [phase]);
   useEffect(() => {
+    if (phase !== 'race') return;
+    const id = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && (active.tagName === 'BUTTON' || active.tagName === 'SELECT' || active.tagName === 'INPUT')) {
+        active.blur();
+      }
+      const canvas = document.querySelector('canvas');
+      if (canvas instanceof HTMLCanvasElement) {
+        canvas.tabIndex = 0;
+        canvas.focus({ preventScroll: true });
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [phase, raceVersion]);
+  useEffect(() => {
     const unlock = () => audio.start();
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
@@ -114,7 +129,7 @@ export default function HauntedKart() {
   return (
     <KeyboardControls map={keyMap}>
       <div className="relative w-full h-[100dvh] overflow-hidden night-bg noise no-select">
-        <Canvas dpr={1} gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={() => setReady(true)}>
+        <Canvas dpr={1} gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={({ gl }) => { gl.domElement.tabIndex = 0; setReady(true); }}>
           <Suspense fallback={null}>
             <Scene phase={phase} raceRef={raceRef} raceVersion={raceVersion} selectedId={selectedId} touchRef={touchRef} pausedRef={pausedRef} onFinish={onFinish} onDemoEnd={onDemoEnd} />
           </Suspense>
