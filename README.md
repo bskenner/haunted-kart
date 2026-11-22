@@ -4,8 +4,11 @@ Jogo de corrida no estilo Mario Kart, com tema de Halloween. Escolha um monstro,
 
 ## Jogar agora
 
-- **Jogo publicado:** [https://nifty-gleeful-hertz.replit.app](https://nifty-gleeful-hertz.replit.app)
-- **Projeto no Replit:** [https://replit.com/@bskenner86/NiftyGleefulHertz](https://replit.com/@bskenner86/NiftyGleefulHertz)
+- **Jogo publicado (app antigo, feito pelo Agent):** [https://nifty-gleeful-hertz.replit.app](https://nifty-gleeful-hertz.replit.app)
+- **Projeto antigo no Replit:** [https://replit.com/@bskenner86/NiftyGleefulHertz](https://replit.com/@bskenner86/NiftyGleefulHertz)
+- **Código-fonte (fonte da verdade):** [https://github.com/bskenner/haunted-kart](https://github.com/bskenner/haunted-kart)
+
+Para passar a hospedar este repositório no Replit (sem o Agent), siga a seção **Hospedar no Replit** abaixo.
 
 ## Personagens
 
@@ -95,6 +98,19 @@ npm test        # testes da lógica da corrida
 npm run build   # gerar a versão de produção
 npm run preview # servir a versão gerada
 ```
+
+## Hospedar no Replit
+
+O Replit deve **apenas hospedar** o jogo. As mudanças de código entram por este repositório no GitHub, sem usar o Replit Agent (para não gastar créditos).
+
+Este repositório já inclui `.replit` e `replit.nix` para um app Vite estático: o botão **Run** inicia `npm run dev` em `0.0.0.0:5173`, e a publicação estática gera `npm run build` e serve a pasta `dist`.
+
+1. No app antigo [NiftyGleefulHertz](https://replit.com/@bskenner86/NiftyGleefulHertz), abra **Publishing** e use a opção de **shut down the deployment** (encerrar a publicação). Confirme. No plano Starter só cabe **1 app publicado**; isso libera a vaga. O endereço antigo sai do ar. (O projeto em si não é apagado.)
+2. Importe este repositório **sem abrir o Agent**. Caminho rápido (repositório público): abra [https://replit.com/github.com/bskenner/haunted-kart](https://replit.com/github.com/bskenner/haunted-kart). Ou vá em [replit.com/import](https://replit.com/import), escolha **GitHub**, conecte a conta, selecione `bskenner/haunted-kart` e clique em **Import**. Se aparecer convite para o Agent ou Lite/Full build, ignore e continue só no editor.
+3. Quando o workspace abrir, confira se o botão **Run** sobe o jogo. Não use o Agent para “ajustar” o projeto.
+4. No canto superior direito, clique em **Publish**. Em **Adjust settings**, no menu **Deployment type**, escolha **Static**. Confira se o diretório público é `dist` e o comando de build é `npm run build` (já definidos no `.replit`). Publique como **Public**.
+
+Atualizações futuras: o código é alterado neste repositório e enviado para `main`. No app importado, abra **Tools → Git** e use **Pull changes**. Depois clique em **Republish** (as alterações no editor não vão ao ar sozinhas). Não há republicação automática oficial a cada push.
 
 ## Jogar pelo GitHub Pages
 

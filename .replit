@@ -1,0 +1,25 @@
+# Haunted Kart is hosted on Replit; source of truth is the GitHub repo.
+# Do not use Replit Agent to edit this project.
+run = "npm run dev"
+entrypoint = "index.html"
+modules = ["nodejs-20", "web"]
+hidden = [".config", "node_modules", "dist"]
+
+[nix]
+channel = "stable-25_05"
+
+[deployment]
+deploymentTarget = "static"
+build = ["npm", "run", "build"]
+publicDir = "dist"
+
+[[deployment.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[[ports]]
+localPort = 5173
+externalPort = 80
+
+[gitHubImport]
+requiredFiles = [".replit", "replit.nix"]
