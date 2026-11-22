@@ -45,18 +45,19 @@ export function updateDraft(racer: Racer, racers: Racer[], length: number, dt: n
   return false;
 }
 /** Six racers need only fifteen inexpensive contact tests per simulation step. */
-export function bumpRacers(race: RaceState, length: number) {
+export function bumpRacers(race: RaceState, _length: number) {
   let playerBumped = false;
   for (let i = 0; i < race.racers.length; i++) for (let j = i + 1; j < race.racers.length; j++) {
     const a = race.racers[i], b = race.racers[j];
     if (a.finishTime !== null || b.finishTime !== null || a.recovery > 0 || b.recovery > 0 || a.bumpCooldown > 0 || b.bumpCooldown > 0) continue;
-    const gap = ((a.progress - b.progress + length / 2) % length + length) % length - length / 2;
-    if (Math.abs(gap) >= 2.25 || Math.abs(a.lane - b.lane) >= 1.8 || Math.max(a.speed, b.speed) < 3) continue;
-    const direction = Math.sign(a.lane - b.lane) || (i % 2 ? 1 : -1);
-    const separation = (1.85 - Math.abs(a.lane - b.lane)) * 0.5;
-    a.lane = Math.max(-6.08, Math.min(6.08, a.lane + direction * separation));
-    b.lane = Math.max(-6.08, Math.min(6.08, b.lane - direction * separation));
-    a.lateralSpeed += direction * 1.6; b.lateralSpeed -= direction * 1.6;
+    const dx = a.x - b.x, dz = a.z - b.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist >= 2.35 || dist < 1e-6 || Math.max(Math.abs(a.speed), Math.abs(b.speed)) < 3) continue;
+    const nx = dx / dist, nz = dz / dist;
+    const separation = (2.2 - dist) * 0.5;
+    a.x += nx * separation; a.z += nz * separation;
+    b.x -= nx * separation; b.z -= nz * separation;
+    a.lateralSpeed += nx * 1.6; b.lateralSpeed -= nx * 1.6;
     const exchange = (a.speed - b.speed) * 0.12;
     a.speed -= exchange; b.speed += exchange;
     a.bumpCooldown = b.bumpCooldown = 0.3;

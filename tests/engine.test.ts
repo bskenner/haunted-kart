@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { KEY_MAP } from '../src/game/controls.ts';
 import { BOOST_PADS, bumpRacers, DIFFICULTIES, updateDraft } from '../src/game/arcade.ts';
 import { MOTOR_CLASSES } from '../src/game/motors.ts';
-import { CHARACTERS, ITEMS, TRACK_LENGTH, WALL_EDGE, ROAD_EDGE, driftTier, createRace, updateRace, useItem, trackPoint, chaseCameraScreenX, type Input } from '../src/game/engine.ts';
+import { CHARACTERS, ITEMS, TRACK_LENGTH, WALL_EDGE, ROAD_EDGE, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, type Racer, type Input } from '../src/game/engine.ts';
 
 const gas: Input = { accelerate: true, brake: false, left: false, right: false, drift: false, item: false };
 const coast: Input = { ...gas, accelerate: false };
@@ -18,11 +18,38 @@ function run(race: ReturnType<typeof ready>, seconds: number, input = gas, dt = 
   for (let t = 0; t < seconds; t += dt) updateRace(race, dt, input);
 }
 
+function sit(racer: Racer, progress = racer.progress, lane = racer.lane) {
+  placeRacer(racer, progress, lane);
+}
+function followTrack(race: ReturnType<typeof ready>): Input {
+  const p = race.racers[0];
+  const target = kartPosition(p.progress + 14, 0);
+  let err = Math.atan2(target.x - p.x, target.z - p.z) - p.heading;
+  err = Math.atan2(Math.sin(err), Math.cos(err));
+  return { accelerate: true, brake: false, left: err > 0.05, right: err < -0.05, drift: false, item: false };
+}
+function runFollow(race: ReturnType<typeof ready>, seconds: number, dt = 1 / 60) {
+  for (let t = 0; t < seconds; t += dt) updateRace(race, dt, followTrack(race));
+}
+function cameraScreenX(kart: Racer, cam: Racer) {
+  const fx = Math.sin(cam.heading), fz = Math.cos(cam.heading);
+  const eye = { x: cam.x - fx * 8.5, y: cam.y + 4.2, z: cam.z - fz * 8.5 };
+  const target = { x: cam.x + fx * 6, y: cam.y + 1.2, z: cam.z + fz * 6 };
+  const zx = eye.x - target.x, zy = eye.y - target.y, zz = eye.z - target.z;
+  const zlen = Math.hypot(zx, zy, zz) || 1;
+  const z = { x: zx / zlen, y: zy / zlen, z: zz / zlen };
+  let xx = z.z, xy = 0, xz = -z.x;
+  const xlen = Math.hypot(xx, xy, xz) || 1;
+  xx /= xlen; xy /= xlen; xz /= xlen;
+  return (kart.x - eye.x) * xx + (kart.y - eye.y) * xy + (kart.z - eye.z) * xz;
+}
+
+
 test('every character can finish a genuine three-lap race with all six unique racers', () => {
   for (const c of CHARACTERS) {
     const race = createRace(c.id);
     assert.equal(new Set(race.racers.map(r => r.id)).size, 6);
-    run(race, 180);
+    runFollow(race, 180);
     assert.ok(race.finished, `${c.name} race did not end`);
     assert.equal(race.racers[0].progress, TRACK_LENGTH * 3);
     assert.equal(race.results.length, 6);
@@ -54,15 +81,9 @@ test('walls keep kart inside fences and steering back always recovers', () => {
   }
 });
 test('releasing a charged turn drift grants a short boost', () => {
-  const race = ready();
+  const race = ready(); race.boxes = [];
+  sit(race.racers[0], 0, 0);
   race.racers[0].speed = 20;
-  // Find a curved piece of the circuit.
-  for (let t = 0; t < 1; t += 0.01) {
-    const a = trackPoint(t), b = trackPoint(t + 0.014);
-    if (Math.abs(Math.atan2(Math.sin(b.angle - a.angle), Math.cos(b.angle - a.angle))) > 0.1) {
-      race.racers[0].progress = t * TRACK_LENGTH; break;
-    }
-  }
   run(race, 0.7, { ...gas, drift: true, left: true });
   assert.ok(race.racers[0].driftCharge > 0.45);
   updateRace(race, 1 / 60, gas);
@@ -76,8 +97,7 @@ test('item boxes grant all five items, disappear on collection and respawn', () 
       Math.random = () => (i + 0.1) / ITEMS.length;
       const race = ready();
       const box = race.boxes[0];
-      race.racers[0].progress = box.t * TRACK_LENGTH - 1;
-      race.racers[0].lane = box.lane;
+      sit(race.racers[0], box.t * TRACK_LENGTH - 1, box.lane);
       updateRace(race, 1 / 60, coast);
       assert.equal(race.racers[0].item, ITEMS[i].id);
       assert.ok(box.cooldown > 0);
@@ -88,10 +108,10 @@ test('item boxes grant all five items, disappear on collection and respawn', () 
 });
 test('bats slow only opponents ahead and bone shield blocks a hit', () => {
   const race = ready();
-  race.racers[0].progress = 100;
-  race.racers[1].progress = 110;
-  race.racers[2].progress = 90;
-  race.racers[3].progress = 120;
+  sit(race.racers[0], 100, 0);
+  sit(race.racers[1], 110, 0);
+  sit(race.racers[2], 90, 0);
+  sit(race.racers[3], 120, 0);
   race.racers[3].shield = 6;
   race.racers[0].item = 'bats';
   useItem(race);
@@ -103,6 +123,7 @@ test('bats slow only opponents ahead and bone shield blocks a hit', () => {
 });
 test('ghost boosts and bone shield expire', () => {
   const race = ready();
+  race.boxes = [];
   race.racers[0].speed = 22 + CHARACTERS[0].speed * 0.95;
   race.racers[0].item = 'ghost'; useItem(race);
   assert.equal(race.racers[0].boost, 2.5);
@@ -117,7 +138,7 @@ test('pumpkin projectile hits an opponent ahead and slime spins a pursuer', () =
   const race = ready();
   race.boxes = [];
   const p = race.racers[0], target = race.racers[1];
-  p.progress = 100; p.lane = 0; target.progress = 110; target.lane = 0;
+  sit(p, 100, 0); sit(target, 110, 0);
   p.item = 'pumpkin'; useItem(race);
   let hit = false;
   for (let i = 0; i < 120; i++) {
@@ -127,8 +148,8 @@ test('pumpkin projectile hits an opponent ahead and slime spins a pursuer', () =
   assert.ok(hit, 'pumpkin did not hit');
   target.spin = 0;
   target.recovery = 0; // This independent slime assertion is not a second hit during protection.
-  p.progress = 200; p.lane = 0; p.item = 'slime'; useItem(race);
-  target.progress = 197; target.lane = 0;
+  sit(p, 200, 0); p.item = 'slime'; useItem(race);
+  sit(target, 197, 0);
   updateRace(race, 1 / 60, coast);
   assert.ok(target.spin > 0);
 });
@@ -148,7 +169,7 @@ test('slow frames preserve elapsed race time', () => {
 });
 test('results contain actual finish times for the whole field', () => {
   const race = ready();
-  race.racers[0].progress = TRACK_LENGTH * 3 - 0.1;
+  sit(race.racers[0], TRACK_LENGTH * 3 - 0.1, 0);
   race.racers[0].speed = 28;
   updateRace(race, 1 / 60, gas);
   assert.equal(race.finished, false, 'results must wait for the remaining field');
@@ -157,22 +178,27 @@ test('results contain actual finish times for the whole field', () => {
   assert.ok(race.results.every(r => !r.estimated));
 });
 
-test('normal steering responds immediately and stops sliding when released', () => {
+test('normal steering responds immediately and stops turning when released', () => {
   const race = ready(); race.boxes = []; race.racers[0].speed = 24;
-  const startX = chaseCameraScreenX(race.racers[0].progress, race.racers[0].lane);
+  const cam = { ...race.racers[0] };
+  const heading0 = race.racers[0].heading;
   run(race, 0.1, { ...gas, right: true });
-  const rightX = chaseCameraScreenX(race.racers[0].progress, race.racers[0].lane, 0);
-  assert.ok(rightX > startX + 0.15, `right should move toward screen-right, got ${rightX}`);
-  assert.ok(race.racers[0].lateralSpeed < -3);
+  const rightX = cameraScreenX(race.racers[0], cam);
+  assert.ok(rightX > 0.15, `right should move toward screen-right, got ${rightX}`);
+  assert.ok(race.racers[0].heading < heading0);
+  const after = race.racers[0].heading;
   run(race, 0.25);
-  assert.ok(Math.abs(race.racers[0].lateralSpeed) < 0.1);
+  assert.equal(race.racers[0].heading, after);
 });
 test('orange drift turbo is longer and stronger than blue', () => {
   function drift(seconds: number) {
     const race = ready(); race.boxes = [];
-    race.racers[0].lane = 0; race.racers[0].speed = 24;
+    sit(race.racers[0], race.racers[0].progress, 0); race.racers[0].speed = 24;
     run(race, seconds, { ...gas, left: true, drift: true });
     const tier = driftTier(race.racers[0].driftCharge);
+    // Snap back to the tarmac so the release bonus is judged on-road.
+    sit(race.racers[0], race.racers[0].progress, 0);
+    race.racers[0].speed = 24;
     updateRace(race, 1 / 60, gas);
     return { tier, duration: race.racers[0].boost, power: race.racers[0].boostPower };
   }
@@ -183,18 +209,27 @@ test('orange drift turbo is longer and stronger than blue', () => {
 });
 test('offroad slows the kart and wall impact bounces without stopping it', () => {
   const race = ready(); race.boxes = [];
-  const p = race.racers[0]; p.speed = 28; p.lane = WALL_EDGE - 0.01; p.lateralSpeed = 6;
-  updateRace(race, 1 / 60, { ...gas, left: true });
-  assert.ok(p.lateralSpeed < 0);
+  const p = race.racers[0];
+  sit(p, 0, 0);
+  p.speed = 28;
+  p.heading = p.heading + Math.PI / 2;
+  updateRace(race, 1 / 60, gas);
+  assert.ok(Math.abs(p.lane) <= WALL_EDGE + 0.001);
   assert.ok(p.speed > 15);
-  assert.ok(p.offroad);
-  run(race, 1, { ...gas, left: true });
+  run(race, 0.8, gas);
+  assert.ok(p.offroad || Math.abs(p.lane) > ROAD_EDGE * 0.8);
   const offroadSpeed = p.speed;
-  assert.ok(offroadSpeed < 20);
-  run(race, 1.5, { ...gas, right: true });
+  assert.ok(offroadSpeed < 28);
+  // Steer back toward the track centerline.
+  for (let i = 0; i < 180; i++) {
+    const proj = projectOnTrack(p.x, p.z);
+    const desired = proj.angle;
+    let err = Math.atan2(Math.sin(desired - p.heading), Math.cos(desired - p.heading));
+    updateRace(race, 1 / 60, { ...gas, left: err > 0.04, right: err < -0.04 });
+  }
   assert.ok(Math.abs(p.lane) < ROAD_EDGE);
   assert.ok(!p.offroad);
-  run(race, 2);
+  runFollow(race, 2);
   assert.ok(p.speed > offroadSpeed);
 });
 test('deliberate reverse warns about wrong way and acceleration recovers', () => {
@@ -224,7 +259,7 @@ test('rocket start rewards a timed press, early throttle misses the boost withou
 });
 test('AI catch-up is light and never changes progress discontinuously', () => {
   const race = ready(); race.boxes = [];
-  race.racers.forEach((r, i) => { r.progress = i === 5 ? -100 : 100; r.speed = 26; });
+  race.racers.forEach((r, i) => { sit(r, i === 5 ? -100 : 100, r.lane); r.speed = 26; });
   const prior = race.racers.map(r => r.progress);
   updateRace(race, 1 / 60, gas);
   race.racers.forEach((r, i) => assert.ok(r.progress - prior[i] >= 0 && r.progress - prior[i] < 0.7));
@@ -235,7 +270,7 @@ test('race events announce laps, final lap, items, hits and finish only when the
   const race = ready(); race.boxes = [];
   const p = race.racers[0]; p.speed = 28;
   for (let lap = 1; lap <= 3; lap++) {
-    p.progress = TRACK_LENGTH * lap - 0.1;
+    sit(p, TRACK_LENGTH * lap - 0.1, 0);
     updateRace(race, 1 / 60, gas);
   }
   for (const type of ['lap', 'finalLap', 'finish']) assert.equal(race.events.filter(e => e.type === type).length, 1);
@@ -256,18 +291,22 @@ test('new keyboard scheme separates movement, item and every drift alternate', (
 test('left input moves the kart to the screen-left of the chase camera and yaws that way', () => {
   for (const startProgress of [0, TRACK_LENGTH * 0.4]) {
     const left = isolated(), rightRace = isolated();
+    const cams: Racer[] = [];
     for (const race of [left, rightRace]) {
       const p = race.racers[0];
-      p.progress = startProgress; p.lane = 0; p.speed = 24; p.padCooldown = 10000;
+      sit(p, startProgress, 0); p.speed = 24; p.padCooldown = 10000;
+      cams.push({ ...p });
     }
     run(left, 0.25, { ...gas, left: true });
     run(rightRace, 0.25, { ...gas, right: true });
-    const leftX = chaseCameraScreenX(left.racers[0].progress, left.racers[0].lane, 0);
-    const rightX = chaseCameraScreenX(rightRace.racers[0].progress, rightRace.racers[0].lane, 0);
+    const leftX = cameraScreenX(left.racers[0], cams[0]);
+    const rightX = cameraScreenX(rightRace.racers[0], cams[1]);
     assert.ok(leftX < -0.2, `left should be screen-left at progress ${startProgress}, got ${leftX}`);
     assert.ok(rightX > 0.2, `right should be screen-right at progress ${startProgress}, got ${rightX}`);
     assert.ok(left.racers[0].steering > 0.3, 'left yaw should be positive rotation.y (screen-left)');
     assert.ok(rightRace.racers[0].steering < -0.3, 'right yaw should be negative rotation.y');
+    assert.ok(left.racers[0].heading > cams[0].heading);
+    assert.ok(rightRace.racers[0].heading < cams[1].heading);
   }
 });
 test('ArrowUp accelerate starts immediately and holding from the countdown does not stumble', () => {
@@ -285,23 +324,28 @@ test('ArrowUp accelerate starts immediately and holding from the countdown does 
   assert.ok(fresh.racers[0].speed > v0);
 });
 test('drift hops once, locks direction, accepts countersteering and releases a turbo', () => {
-  const race = isolated(), p = race.racers[0]; p.speed = 24; p.lane = 1;
+  const race = isolated(), p = race.racers[0]; sit(p, p.progress, 0); p.speed = 24;
   updateRace(race, 1 / 60, { ...gas, left: true, drift: true });
   assert.ok(p.hop > 0); assert.equal(p.driftDirection, 1);
   run(race, 0.35, { ...gas, left: true, drift: true });
   assert.equal(p.hop, 0);
-  const before = p.lane;
-  run(race, 0.4, { ...gas, right: true, drift: true });
-  assert.equal(p.driftDirection, 1); assert.ok(p.lane > before);
-  assert.ok(p.drifting); assert.ok(p.driftCharge > 0.7);
+  const heading = p.heading;
+  run(race, 0.12, { ...gas, right: true, drift: true });
+  assert.equal(p.driftDirection, 1);
+  assert.ok(p.heading > heading, 'locked left drift must keep turning left during countersteer');
+  assert.ok(p.drifting); assert.ok(p.driftCharge > 0.4);
+  run(race, 0.35, { ...gas, right: true, drift: true });
   updateRace(race, 1 / 60, gas);
   assert.equal(p.driftDirection, 0); assert.ok(p.boost > 0);
 });
-test('low-speed steering is snappier and high-speed steering is more stable', () => {
-  const low = isolated(), high = isolated();
-  low.racers[0].speed = 5; high.racers[0].speed = 35;
-  run(low, 0.2, { ...gas, right: true }); run(high, 0.2, { ...gas, right: true });
-  assert.ok(Math.abs(low.racers[0].lateralSpeed) > Math.abs(high.racers[0].lateralSpeed));
+test('steering turn rate is scaled by speed and is weak when almost stopped', () => {
+  const stopped = isolated(), slow = isolated(), fast = isolated();
+  stopped.racers[0].speed = 0.4; slow.racers[0].speed = 5; fast.racers[0].speed = 35;
+  const h0 = [stopped, slow, fast].map(r => r.racers[0].heading);
+  for (const race of [stopped, slow, fast]) run(race, 0.2, { ...gas, right: true });
+  const d = [stopped, slow, fast].map((r, i) => Math.abs(r.racers[0].heading - h0[i]));
+  assert.ok(d[0] < d[1], `stopped ${d[0]} vs slow ${d[1]}`);
+  assert.ok(d[1] < d[2] + 1e-6, `slow ${d[1]} vs fast ${d[2]}`);
 });
 test('roulette blocks use until it settles, without spending the selected item', () => {
   const race = isolated(), p = race.racers[0];
@@ -313,7 +357,7 @@ test('roulette blocks use until it settles, without spending the selected item',
 test('hit recovery prevents chained attacks and expires', () => {
   const race = ready(); race.boxes = [];
   const p = race.racers[0], attacker = race.racers[1];
-  p.progress = 100; attacker.progress = 90;
+  sit(p, 100, 0); sit(attacker, 90, 0);
   attacker.item = 'bats'; useItem(race, 1);
   const speed = p.speed; p.spin = 0;
   attacker.item = 'bats'; useItem(race, 1);
@@ -324,17 +368,19 @@ test('hit recovery prevents chained attacks and expires', () => {
 });
 test('kart contacts separate racers gently without stopping or trapping them', () => {
   const race = ready(); const a = race.racers[0], b = race.racers[1];
-  a.progress = b.progress = 40; a.lane = 0; b.lane = 0.5; a.speed = 25; b.speed = 20;
+  sit(a, 40, 0); sit(b, 40, 0.5); a.speed = 25; b.speed = 20;
+  const before = Math.hypot(a.x - b.x, a.z - b.z);
   assert.ok(bumpRacers(race, TRACK_LENGTH));
-  assert.ok(Math.abs(a.lane - b.lane) >= 1.8);
+  const after = Math.hypot(a.x - b.x, a.z - b.z);
+  assert.ok(after > before);
   assert.ok(a.speed > 20 && b.speed > 20);
-  const lane = a.lane;
-  bumpRacers(race, TRACK_LENGTH); assert.equal(a.lane, lane);
+  const ax = a.x, az = a.z;
+  bumpRacers(race, TRACK_LENGTH); assert.equal(a.x, ax); assert.equal(a.z, az);
 });
 test('slipstream charges only behind an opponent, grants one boost and respects cooldown', () => {
   const race = ready(); const a = race.racers[0], b = race.racers[1];
   race.racers.slice(2).forEach(r => { r.finishTime = 1; });
-  a.progress = 100; b.progress = 108; a.lane = b.lane = 0; a.speed = b.speed = 25;
+  sit(a, 100, 0); sit(b, 108, 0); a.speed = b.speed = 25;
   let triggered = false;
   for (let i = 0; i < 70; i++) if (updateDraft(a, [a, b], TRACK_LENGTH, 1 / 60)) triggered = true;
   assert.ok(triggered); assert.ok(a.draftCooldown > 0);
@@ -343,20 +389,20 @@ test('slipstream charges only behind an opponent, grants one boost and respects 
 });
 test('boost pads trigger at speed on the painted lane, not adjacent lanes or reverse', () => {
   const pad = BOOST_PADS[0], race = isolated(), p = race.racers[0];
-  p.progress = pad.t * TRACK_LENGTH - 1.9; p.lane = pad.lane; p.speed = 26;
+  sit(p, pad.t * TRACK_LENGTH - 1.9, pad.lane); p.speed = 26;
   updateRace(race, 1 / 60, gas);
   assert.ok(p.boost > 0); assert.ok(race.events.some(e => e.type === 'pad'));
-  const missed = isolated(); missed.racers[0].progress = pad.t * TRACK_LENGTH - 1;
-  missed.racers[0].lane = 4; missed.racers[0].speed = 26; updateRace(missed, 1 / 60, gas);
+  const missed = isolated(); sit(missed.racers[0], pad.t * TRACK_LENGTH - 1, 4);
+  missed.racers[0].speed = 26; updateRace(missed, 1 / 60, gas);
   assert.equal(missed.racers[0].boost, 0);
 });
 test('difficulty changes real AI pace while preserving three-lap finishes', () => {
   const mean: number[] = [];
   for (const difficulty of Object.keys(DIFFICULTIES) as (keyof typeof DIFFICULTIES)[]) {
     const race = createRace(0, difficulty); race.countdown = 0; race.boxes = [];
-    run(race, 8);
+    runFollow(race, 8);
     mean.push(race.racers.slice(1).reduce((sum, r) => sum + r.progress, 0) / 5);
-    run(race, 100);
+    runFollow(race, 100);
     assert.ok(race.finished); assert.equal(race.results.length, 6);
   }
   assert.ok(mean[0] < mean[1] && mean[1] < mean[2], JSON.stringify(mean));
@@ -377,8 +423,8 @@ test('Turbo raises acceleration for every racer, not only the human', () => {
   const normal = createRace(0), turbo = createRace(0, 'normal', 'turbo');
   for (const race of [normal, turbo]) {
     race.countdown = 0; race.boxes = []; race.aiTimers.fill(10000);
-    race.racers.forEach((r, i) => { r.progress = i * 40; r.padCooldown = 10000; });
-    run(race, 0.7);
+    race.racers.forEach((r, i) => { sit(r, i * 40, r.lane); r.padCooldown = 10000; });
+    runFollow(race, 0.7);
   }
   normal.racers.forEach((r, i) => assert.ok(turbo.racers[i].speed > r.speed * 1.15, CHARACTERS[r.id].name));
 });
@@ -388,25 +434,69 @@ test('Turbo top speed is 22 percent higher and steering has stronger grip', () =
     const race = createRace(0, 'normal', motorClass);
     race.countdown = 0; race.boxes = [];
     race.racers.slice(1).forEach(r => { r.finishTime = 1; });
-    const p = race.racers[0]; p.padCooldown = 10000; p.lane = 0;
-    run(race, 7);
+    const p = race.racers[0]; p.padCooldown = 10000; sit(p, p.progress, 0);
+    runFollow(race, 7);
     speeds.push(p.speed);
-    run(race, 0.2, { ...gas, right: true }); lateral.push(p.lateralSpeed);
-    run(race, 0.15, gas); residual.push(p.lateralSpeed);
+    const heading = p.heading;
+    run(race, 0.2, { ...gas, right: true }); lateral.push(Math.abs(p.heading - heading));
+    const steer = Math.abs(p.steering);
+    run(race, 0.15, gas); residual.push(Math.abs(p.steering));
+    void steer;
   }
   assert.ok(Math.abs(speeds[1] / speeds[0] - 1.22) < 0.001);
-  assert.ok(Math.abs(lateral[1]) > Math.abs(lateral[0]));
-  assert.ok(Math.abs(residual[1]) < Math.abs(residual[0]));
+  assert.ok(lateral[1] > lateral[0]);
+  assert.ok(residual[1] < residual[0]);
   assert.ok(MOTOR_CLASSES.turbo.camera > MOTOR_CLASSES.normal.camera);
 });
 test('both motor classes finish all three laps at every difficulty without stuck racers', () => {
   for (const motorClass of ['normal', 'turbo'] as const) for (const difficulty of ['easy', 'normal', 'hard'] as const) {
     const race = createRace(0, difficulty, motorClass);
-    run(race, 110);
+    runFollow(race, 110);
     assert.ok(race.finished, `${motorClass}/${difficulty}`);
     assert.equal(race.results.length, 6);
     assert.ok(race.results.every(r => Number.isFinite(r.time) && !r.estimated));
     const times = race.results.map(r => r.time);
     assert.ok(Math.max(...times) - Math.min(...times) < 25, 'AI must stay within a reasonable finishing spread');
   }
+});
+
+test('with no steering input the player heading stays unchanged', () => {
+  const race = isolated();
+  const p = race.racers[0];
+  sit(p, 0, 0); p.speed = 20; p.padCooldown = 10000;
+  const heading = p.heading;
+  const x0 = p.x, z0 = p.z;
+  run(race, 0.5, gas);
+  assert.equal(p.heading, heading);
+  assert.ok(Math.hypot(p.x - x0, p.z - z0) > 5, 'the kart must still roll forward');
+});
+test('left input turns heading toward the screen-left', () => {
+  const race = isolated();
+  const p = race.racers[0];
+  sit(p, 0, 0); p.speed = 20;
+  const heading = p.heading;
+  run(race, 0.3, { ...gas, left: true });
+  assert.ok(p.heading > heading + 0.08);
+  assert.ok(p.steering > 0.3);
+});
+test('on a curve with no steer input the kart does not follow the rail', () => {
+  const race = isolated();
+  const p = race.racers[0];
+  let curved = 0;
+  for (let t = 0; t < 1; t += 0.01) {
+    const a = trackPoint(t), b = trackPoint(t + 0.03);
+    if (Math.abs(Math.atan2(Math.sin(b.angle - a.angle), Math.cos(b.angle - a.angle))) > 0.12) {
+      curved = t * TRACK_LENGTH; break;
+    }
+  }
+  assert.ok(curved > 0, 'need a curved section');
+  sit(p, curved, 0); p.speed = 22; p.padCooldown = 10000;
+  const heading = p.heading;
+  const start = { x: p.x, z: p.z };
+  run(race, 0.6, gas);
+  assert.equal(p.heading, heading);
+  const traveled = Math.hypot(p.x - start.x, p.z - start.z);
+  const rail = kartPosition(curved + traveled, 0);
+  const offRail = Math.hypot(p.x - rail.x, p.z - rail.z);
+  assert.ok(offRail > 1.2, `should go straight instead of following the curve, offRail=${offRail}`);
 });

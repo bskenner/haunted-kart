@@ -86,6 +86,86 @@ export function chaseCameraScreenX(progress: number, lane: number, cameraLane = 
   return (kart.x - eye.x) * xx + (kart.y - eye.y) * xy + (kart.z - eye.z) * xz;
 }
 
+
+export const CHECKPOINTS = 16;
+
+/** Nearest centerline sample to a free world position, with signed lane offset. */
+export function projectOnTrack(x: number, z: number) {
+  let bestI = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < SAMPLES; i++) {
+    const p = trackPoint(i / SAMPLES);
+    const d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
+    if (d < bestD) { bestD = d; bestI = i; }
+  }
+  const p = trackPoint(bestI / SAMPLES);
+  const lane = (x - p.x) * Math.cos(p.angle) - (z - p.z) * Math.sin(p.angle);
+  return { progress: (bestI / SAMPLES) * TRACK_LENGTH, lane, angle: p.angle, y: p.y, dist: Math.sqrt(bestD) };
+}
+
+/** Place a racer on the rail pose. Used for the grid, AI, and test teleports. */
+export function placeRacer(racer: Racer, progress = racer.progress, lane = racer.lane) {
+  racer.progress = progress;
+  racer.lane = lane;
+  const p = kartPosition(progress, lane);
+  racer.x = p.x;
+  racer.y = p.y;
+  racer.z = p.z;
+  racer.heading = p.angle;
+  return racer;
+}
+
+function unwrapNear(current: number, onLap: number) {
+  const lap = Math.floor(current / TRACK_LENGTH);
+  let best = (lap - 1) * TRACK_LENGTH + onLap;
+  for (const extra of [0, 1]) {
+    const cand = (lap + extra) * TRACK_LENGTH + onLap;
+    if (Math.abs(cand - current) < Math.abs(best - current)) best = cand;
+  }
+  return best;
+}
+
+/** Follow the nearest point only inside the current checkpoint sector; skip ahead is ignored. */
+export function authorizeProgress(racer: Racer, nearestOnLap: number) {
+  const sector = TRACK_LENGTH / CHECKPOINTS;
+  const current = racer.progress;
+  const projected = unwrapNear(current, nearestOnLap);
+  const start = Math.floor(current / sector) * sector;
+  const end = start + sector;
+  if (projected >= start - sector * 0.25 && projected <= end + 0.05) {
+    racer.progress = clamp(projected, start - sector * 0.2, end);
+  }
+  if (projected > end) {
+    const gate = kartPosition(end, 0);
+    if (Math.hypot(racer.x - gate.x, racer.z - gate.z) < 12) {
+      racer.progress = clamp(projected, start, end + sector);
+    }
+  }
+}
+
+function constrainPlayerToWalls(racer: Racer) {
+  const proj = projectOnTrack(racer.x, racer.z);
+  if (Math.abs(proj.lane) < WALL_EDGE) return false;
+  const side = Math.sign(proj.lane) || 1;
+  const nx = Math.cos(proj.angle) * side;
+  const nz = -Math.sin(proj.angle) * side;
+  const excess = Math.abs(proj.lane) - (WALL_EDGE - 0.06);
+  racer.x -= nx * excess;
+  racer.z -= nz * excess;
+  const vx = Math.sin(racer.heading) * racer.speed;
+  const vz = Math.cos(racer.heading) * racer.speed;
+  const vn = vx * nx + vz * nz;
+  if (vn > 0) {
+    const rx = vx - 2 * vn * nx;
+    const rz = vz - 2 * vn * nz;
+    const mag = Math.hypot(rx, rz);
+    racer.speed = mag * Math.sign(racer.speed || 1);
+    if (mag > 0.15) racer.heading = Math.atan2(rx, rz);
+    racer.lateralSpeed = -side * Math.max(1.8, Math.abs(racer.lateralSpeed) * 0.45);
+  }
+  return true;
+}
+
 export interface Input {
   accelerate: boolean; brake: boolean; left: boolean; right: boolean; drift: boolean; item: boolean;
 }
@@ -93,6 +173,7 @@ export interface Racer extends ArcadeRacer {
   id: number; progress: number; lane: number; speed: number; boost: number; shield: number;
   spin: number; slow: number; driftCharge: number; drifting: boolean; item: string | null;
   finishTime: number | null;
+  x: number; y: number; z: number; heading: number;
   lateralSpeed: number; steering: number; boostPower: number; offroad: boolean;
   wallCooldown: number; reverseHold: number; wrongWay: number; stumble: number;
   pickupFlash: number; useFlash: number; hitFlash: number;
@@ -128,12 +209,13 @@ function boost(race: RaceState, racer: Racer, duration: number, power: number, t
 }
 export function createRace(characterId: number, difficulty: Difficulty = 'normal', motorClass: MotorClass = 'normal'): RaceState {
   const ids = [characterId, ...CHARACTERS.filter(c => c.id !== characterId).map(c => c.id)];
-  return {
+  const race: RaceState = {
     racers: ids.map((id, i) => ({
       ...arcadeRacer(),
       id, progress: i < 2 ? 0 : -Math.floor(i / 2) * 3.5, lane: i % 2 === 0 ? -1.6 : 1.6,
       speed: 0, boost: 0, shield: 0, spin: 0, slow: 0, driftCharge: 0, drifting: false,
       item: null, finishTime: null,
+      x: 0, y: 0, z: 0, heading: 0,
       lateralSpeed: 0, steering: 0, boostPower: 1, offroad: false, wallCooldown: 0,
       reverseHold: 0, wrongWay: 0, stumble: 0, pickupFlash: 0, useFlash: 0, hitFlash: 0,
     })),
@@ -142,6 +224,8 @@ export function createRace(characterId: number, difficulty: Difficulty = 'normal
     message: '', messageTime: 0, aiTimers: ids.map((_, i) => 7 + i * 1.8), itemHeld: false,
     events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null,
   };
+  race.racers.forEach(r => placeRacer(r));
+  return race;
 }
 function announce(race: RaceState, message: string) {
   race.message = message;
@@ -258,7 +342,7 @@ function stepRace(race: RaceState, dt: number, input: Input) {
     let throttle = index === 0 ? input.accelerate : true;
     const braking = index === 0 && input.brake;
     const steering = index === 0 ? Number(input.left) - Number(input.right) : 0;
-    const canDrift = index === 0 && input.drift && racer.speed > 8 && racer.spin === 0 && !racer.offroad && !braking;
+    const canDrift = index === 0 && input.drift && racer.speed > 8 && racer.spin === 0 && !braking;
     if (index === 0) {
       if (input.drift && !racer.driftHeld && racer.speed > 2 && racer.spin === 0) {
         racer.hop = 0.3; emit(race, 'hop');
@@ -317,32 +401,18 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         race.aiTimers[index] = (2.2 + Math.random() * 2.8) * difficulty.aggression;
       }
     } else {
-      // In the Three.js chase camera, a positive lane sits on the LEFT of the screen.
-      // Left input is +steering: it increases lane, yaws with positive rotation.y, and goes screen-left.
-      const stability = 1 - 0.32 * clamp((Math.abs(racer.speed) / motor.speed - 12) / 24, 0, 1);
+      // Fully manual: heading changes only from the player's steer/drift input.
+      // No rail, auto-alignment, auto-centering, or magnet back to the track.
       const steerRate = 1 - Math.exp(-dt / (steering ? 0.1 : 0.04) * motor.grip);
       racer.steering += (steering - racer.steering) * steerRate;
-      const speedFeel = Math.min(1, 0.45 + Math.abs(racer.speed) / 3.5);
-      let lateralTarget = steering * (3.6 + stats.handling * 0.26) * motor.steering * stability * speedFeel;
-      if (drifting) {
-        const arc = steering === racer.driftDirection ? 1.05 : steering ? 0.18 : 0.5;
-        lateralTarget = racer.driftDirection * (2 + stats.handling * 0.08) * arc * motor.steering;
-        // Drift steering follows the bend without constantly sliding into fences.
-        if (Math.abs(racer.lane) > 3.9 && Math.sign(lateralTarget) === Math.sign(racer.lane)) lateralTarget *= 0.06;
-      }
-      if (racer.spin > 0) lateralTarget = 0;
-      const latRate = drifting ? 9 : steering ? 14 : 28;
-      racer.lateralSpeed += (lateralTarget - racer.lateralSpeed) * (1 - Math.exp(-latRate * motor.grip * dt));
-      if (!steering && Math.abs(racer.lane) > ROAD_EDGE) racer.lateralSpeed -= Math.sign(racer.lane) * 9 * dt;
-      racer.lane += racer.lateralSpeed * dt;
-      if (Math.abs(racer.lane) >= WALL_EDGE) {
-        const side = Math.sign(racer.lane);
-        racer.lane = side * (WALL_EDGE - 0.06);
-        racer.lateralSpeed = -side * Math.max(1.8, Math.abs(racer.lateralSpeed) * 0.45);
-        if (racer.wallCooldown === 0) {
-          racer.speed *= 0.88;
-          racer.wallCooldown = 0.55;
-          emit(race, 'wall');
+      if (racer.spin === 0) {
+        const speedScale = Math.min(1, Math.abs(racer.speed) / 7);
+        const turn = (0.85 + stats.handling * 0.06) * motor.steering * speedScale;
+        if (drifting) {
+          const arc = steering === racer.driftDirection ? 1.25 : steering ? 0.45 : 0.9;
+          racer.heading += racer.driftDirection * turn * arc * dt;
+        } else if (steering) {
+          racer.heading += steering * turn * dt;
         }
       }
       racer.offroad = Math.abs(racer.lane) > ROAD_EDGE;
@@ -386,8 +456,26 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         racer.speed = Math.sign(racer.speed) * Math.max(0, Math.abs(racer.speed) - drag);
       }
     }
-    racer.wrongWay = racer.speed < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
-    racer.progress += racer.speed * dt;
+    if (index === 0) {
+      racer.x += Math.sin(racer.heading) * racer.speed * dt;
+      racer.z += Math.cos(racer.heading) * racer.speed * dt;
+      if (constrainPlayerToWalls(racer) && racer.wallCooldown === 0) {
+        racer.speed *= 0.88;
+        racer.wallCooldown = 0.55;
+        emit(race, 'wall');
+      }
+      const proj = projectOnTrack(racer.x, racer.z);
+      racer.y = proj.y;
+      racer.lane = proj.lane;
+      racer.offroad = Math.abs(proj.lane) > ROAD_EDGE;
+      authorizeProgress(racer, proj.progress);
+      const moveDot = racer.speed * (Math.sin(racer.heading) * Math.sin(proj.angle) + Math.cos(racer.heading) * Math.cos(proj.angle));
+      racer.wrongWay = moveDot < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
+    } else {
+      racer.wrongWay = racer.speed < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
+      racer.progress += racer.speed * dt;
+      placeRacer(racer);
+    }
     if (racer.speed > 5 && racer.padCooldown === 0 && BOOST_PADS.some(pad =>
       Math.abs(racer.lane - pad.lane) < 1.65 && crossedMarker(prevProgress, racer.progress, pad.t, TRACK_LENGTH, 2))) {
       racer.padCooldown = 1.3;
@@ -427,6 +515,17 @@ function stepRace(race: RaceState, dt: number, input: Input) {
     }
   });
   if (bumpRacers(race, TRACK_LENGTH)) emit(race, 'bump');
+  race.racers.forEach((racer, index) => {
+    if (racer.finishTime !== null) return;
+    const proj = projectOnTrack(racer.x, racer.z);
+    if (index === 0) {
+      racer.lane = proj.lane;
+      racer.y = proj.y;
+    } else {
+      racer.lane = clamp(proj.lane, -6.08, 6.08);
+      placeRacer(racer);
+    }
+  });
   for (const projectile of race.projectiles) {
     projectile.life -= dt;
     projectile.t = wrap(projectile.t + 57 * motor.speed * dt / TRACK_LENGTH);

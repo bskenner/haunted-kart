@@ -49,9 +49,11 @@ function RacerMesh({ index, raceRef }: { index: number; raceRef: MutableRefObjec
   useFrame(({ clock }, dt) => {
     const r = raceRef.current.racers[index];
     if (!r || !outer.current || !inner.current) return;
-    const pose = place(r.progress, r.lane, outer.current.position);
-    outer.current.rotation.set(pose.pitch, pose.angle, 0, 'YXZ');
-    const dl = (r.lane - prevLane.current) / Math.max(dt, 0.001);
+    outer.current.position.set(r.x, r.y, r.z);
+    const ahead = trackPoint(r.progress / TRACK_LENGTH + 2 / TRACK_LENGTH);
+    const worldPitch = -Math.atan2(ahead.y - r.y, 2);
+    outer.current.rotation.set(worldPitch, r.heading, 0, 'YXZ');
+    const dl = r.steering * 4;
     prevLane.current = r.lane;
     const t = clock.elapsedTime;
     const follow = 1 - Math.exp(-14 * dt);
@@ -211,18 +213,17 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
       lookT.set(s.x + (narrow ? 0 : -2.6), s.y + (narrow ? -0.3 : 1.2), s.z);
     } else if (phase === 'race') {
       const r = race.racers[0];
-      const pose = place(r.progress, r.lane, _p);
-      const yaw = pose.angle + r.steering * 0.18;
+      const yaw = r.heading;
       const fx = Math.sin(yaw), fz = Math.cos(yaw);
       const back = (size.width < 768 ? 10 : 8.5) + (race.motorClass === 'turbo' ? 0.5 : 0);
-      target.set(_p.x - fx * back, _p.y + 4.2, _p.z - fz * back);
+      target.set(r.x - fx * back, r.y + 4.2, r.z - fz * back);
       const lookAhead = race.motorClass === 'turbo' ? 7.2 : 6;
-      lookT.set(_p.x + fx * lookAhead, _p.y + 1.2, _p.z + fz * lookAhead);
+      lookT.set(r.x + fx * lookAhead, r.y + 1.2, r.z + fz * lookAhead);
       if (race.countdown > 0) target.y += race.countdown * 0.6;
     } else {
       // title/results: cinematic orbit around a racer
       const lead = phase === 'results' ? race.racers[0] : race.racers.reduce((a, b) => (b.progress > a.progress ? b : a));
-      place(lead.progress, lead.lane, _p);
+      _p.set(lead.x, lead.y, lead.z);
       const a = t * 0.12;
       const rad = phase === 'results' ? 12 : 15;
       target.set(_p.x + Math.cos(a) * rad, _p.y + 6 + Math.sin(t * 0.2) * 1.5, _p.z + Math.sin(a) * rad);
