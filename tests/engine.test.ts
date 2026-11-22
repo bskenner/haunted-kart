@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { KEY_MAP } from '../src/game/controls.ts';
+import { BOOST_PADS, bumpRacers, DIFFICULTIES, updateDraft } from '../src/game/arcade.ts';
+import { MOTOR_CLASSES } from '../src/game/motors.ts';
 import { CHARACTERS, ITEMS, TRACK_LENGTH, WALL_EDGE, ROAD_EDGE, driftTier, createRace, updateRace, useItem, trackPoint, type Input } from '../src/game/engine.ts';
 
 const gas: Input = { accelerate: true, brake: false, left: false, right: false, drift: false, item: false };
@@ -123,6 +126,7 @@ test('pumpkin projectile hits an opponent ahead and slime spins a pursuer', () =
   }
   assert.ok(hit, 'pumpkin did not hit');
   target.spin = 0;
+  target.recovery = 0; // This independent slime assertion is not a second hit during protection.
   p.progress = 200; p.lane = 0; p.item = 'slime'; useItem(race);
   target.progress = 197; target.lane = 0;
   updateRace(race, 1 / 60, coast);
@@ -234,4 +238,142 @@ test('race events announce laps, final lap, items, hits and finish only when the
   }
   for (const type of ['lap', 'finalLap', 'finish']) assert.equal(race.events.filter(e => e.type === type).length, 1);
   assert.equal(p.progress, TRACK_LENGTH * 3);
+});
+
+function isolated() {
+  const race = ready(); race.boxes = [];
+  race.racers.slice(1).forEach(r => { r.finishTime = 1; });
+  return race;
+}
+test('new keyboard scheme separates movement, item and every drift alternate', () => {
+  assert.deepEqual(KEY_MAP.find(a => a.name === 'item')!.keys, ['Space', 'KeyE']);
+  assert.deepEqual(KEY_MAP.find(a => a.name === 'drift')!.keys, ['ShiftLeft', 'ShiftRight', 'KeyZ', 'KeyX']);
+  for (const [name, key] of [['accelerate', 'ArrowUp'], ['brake', 'ArrowDown'], ['left', 'ArrowLeft'], ['right', 'ArrowRight']])
+    assert.ok(KEY_MAP.find(a => a.name === name)!.keys.includes(key));
+});
+test('drift hops once, locks direction, accepts countersteering and releases a turbo', () => {
+  const race = isolated(), p = race.racers[0]; p.speed = 24; p.lane = 1;
+  updateRace(race, 1 / 60, { ...gas, left: true, drift: true });
+  assert.ok(p.hop > 0); assert.equal(p.driftDirection, -1);
+  run(race, 0.35, { ...gas, left: true, drift: true });
+  assert.equal(p.hop, 0);
+  const before = p.lane;
+  run(race, 0.4, { ...gas, right: true, drift: true });
+  assert.equal(p.driftDirection, -1); assert.ok(p.lane < before);
+  assert.ok(p.drifting); assert.ok(p.driftCharge > 0.7);
+  updateRace(race, 1 / 60, gas);
+  assert.equal(p.driftDirection, 0); assert.ok(p.boost > 0);
+});
+test('low-speed steering is snappier and high-speed steering is more stable', () => {
+  const low = isolated(), high = isolated();
+  low.racers[0].speed = 5; high.racers[0].speed = 35;
+  run(low, 0.2, { ...gas, right: true }); run(high, 0.2, { ...gas, right: true });
+  assert.ok(low.racers[0].lateralSpeed > high.racers[0].lateralSpeed);
+});
+test('roulette blocks use until it settles, without spending the selected item', () => {
+  const race = isolated(), p = race.racers[0];
+  p.item = 'ghost'; p.roulette = 0.85;
+  useItem(race); assert.equal(p.item, 'ghost'); assert.equal(p.boost, 0);
+  run(race, 0.9, coast); useItem(race);
+  assert.equal(p.item, null); assert.ok(p.boost > 0);
+});
+test('hit recovery prevents chained attacks and expires', () => {
+  const race = ready(); race.boxes = [];
+  const p = race.racers[0], attacker = race.racers[1];
+  p.progress = 100; attacker.progress = 90;
+  attacker.item = 'bats'; useItem(race, 1);
+  const speed = p.speed; p.spin = 0;
+  attacker.item = 'bats'; useItem(race, 1);
+  assert.equal(p.speed, speed); assert.ok(p.recovery > 0);
+  p.shield = 6; attacker.item = 'bats'; useItem(race, 1);
+  assert.equal(p.shield, 6, 'protection must not consume a new shield');
+  run(race, 3, gas); assert.equal(p.recovery, 0);
+});
+test('kart contacts separate racers gently without stopping or trapping them', () => {
+  const race = ready(); const a = race.racers[0], b = race.racers[1];
+  a.progress = b.progress = 40; a.lane = 0; b.lane = 0.5; a.speed = 25; b.speed = 20;
+  assert.ok(bumpRacers(race, TRACK_LENGTH));
+  assert.ok(Math.abs(a.lane - b.lane) >= 1.8);
+  assert.ok(a.speed > 20 && b.speed > 20);
+  const lane = a.lane;
+  bumpRacers(race, TRACK_LENGTH); assert.equal(a.lane, lane);
+});
+test('slipstream charges only behind an opponent, grants one boost and respects cooldown', () => {
+  const race = ready(); const a = race.racers[0], b = race.racers[1];
+  race.racers.slice(2).forEach(r => { r.finishTime = 1; });
+  a.progress = 100; b.progress = 108; a.lane = b.lane = 0; a.speed = b.speed = 25;
+  let triggered = false;
+  for (let i = 0; i < 70; i++) if (updateDraft(a, [a, b], TRACK_LENGTH, 1 / 60)) triggered = true;
+  assert.ok(triggered); assert.ok(a.draftCooldown > 0);
+  a.draftCharge = 1.1; assert.equal(updateDraft(a, [a, b], TRACK_LENGTH, 1 / 60), false);
+  a.lane = 3; updateDraft(a, [a, b], TRACK_LENGTH, 1 / 60); assert.equal(a.draftActive, false);
+});
+test('boost pads trigger at speed on the painted lane, not adjacent lanes or reverse', () => {
+  const pad = BOOST_PADS[0], race = isolated(), p = race.racers[0];
+  p.progress = pad.t * TRACK_LENGTH - 1.9; p.lane = pad.lane; p.speed = 26;
+  updateRace(race, 1 / 60, gas);
+  assert.ok(p.boost > 0); assert.ok(race.events.some(e => e.type === 'pad'));
+  const missed = isolated(); missed.racers[0].progress = pad.t * TRACK_LENGTH - 1;
+  missed.racers[0].lane = 4; missed.racers[0].speed = 26; updateRace(missed, 1 / 60, gas);
+  assert.equal(missed.racers[0].boost, 0);
+});
+test('difficulty changes real AI pace while preserving three-lap finishes', () => {
+  const mean: number[] = [];
+  for (const difficulty of Object.keys(DIFFICULTIES) as (keyof typeof DIFFICULTIES)[]) {
+    const race = createRace(0, difficulty); race.countdown = 0; race.boxes = [];
+    run(race, 8);
+    mean.push(race.racers.slice(1).reduce((sum, r) => sum + r.progress, 0) / 5);
+    run(race, 100);
+    assert.ok(race.finished); assert.equal(race.results.length, 6);
+  }
+  assert.ok(mean[0] < mean[1] && mean[1] < mean[2], JSON.stringify(mean));
+});
+test('Space action neither starts a drift nor triggers a rocket launch', () => {
+  const race = createRace(0);
+  run(race, 3.1, { ...coast, item: true });
+  assert.equal(race.racers[0].hop, 0); assert.equal(race.racers[0].drifting, false);
+  assert.ok(!race.events.some(e => e.type === 'launch'));
+});
+
+test('motor defaults to Normal and remains independent of AI difficulty', () => {
+  assert.equal(createRace(0).motorClass, 'normal');
+  const race = createRace(0, 'hard', 'turbo');
+  assert.equal(race.difficulty, 'hard'); assert.equal(race.motorClass, 'turbo');
+});
+test('Turbo raises acceleration for every racer, not only the human', () => {
+  const normal = createRace(0), turbo = createRace(0, 'normal', 'turbo');
+  for (const race of [normal, turbo]) {
+    race.countdown = 0; race.boxes = []; race.aiTimers.fill(10000);
+    race.racers.forEach((r, i) => { r.progress = i * 40; r.padCooldown = 10000; });
+    run(race, 0.7);
+  }
+  normal.racers.forEach((r, i) => assert.ok(turbo.racers[i].speed > r.speed * 1.15, CHARACTERS[r.id].name));
+});
+test('Turbo top speed is 22 percent higher and steering has stronger grip', () => {
+  const speeds: number[] = [], lateral: number[] = [], residual: number[] = [];
+  for (const motorClass of ['normal', 'turbo'] as const) {
+    const race = createRace(0, 'normal', motorClass);
+    race.countdown = 0; race.boxes = [];
+    race.racers.slice(1).forEach(r => { r.finishTime = 1; });
+    const p = race.racers[0]; p.padCooldown = 10000; p.lane = 0;
+    run(race, 7);
+    speeds.push(p.speed);
+    run(race, 0.2, { ...gas, right: true }); lateral.push(p.lateralSpeed);
+    run(race, 0.15, gas); residual.push(p.lateralSpeed);
+  }
+  assert.ok(Math.abs(speeds[1] / speeds[0] - 1.22) < 0.001);
+  assert.ok(lateral[1] > lateral[0]);
+  assert.ok(residual[1] < residual[0]);
+  assert.ok(MOTOR_CLASSES.turbo.camera > MOTOR_CLASSES.normal.camera);
+});
+test('both motor classes finish all three laps at every difficulty without stuck racers', () => {
+  for (const motorClass of ['normal', 'turbo'] as const) for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+    const race = createRace(0, difficulty, motorClass);
+    run(race, 110);
+    assert.ok(race.finished, `${motorClass}/${difficulty}`);
+    assert.equal(race.results.length, 6);
+    assert.ok(race.results.every(r => Number.isFinite(r.time) && !r.estimated));
+    const times = race.results.map(r => r.time);
+    assert.ok(Math.max(...times) - Math.min(...times) < 25, 'AI must stay within a reasonable finishing spread');
+  }
 });

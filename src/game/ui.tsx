@@ -1,8 +1,11 @@
 import { useEffect, useState, type MutableRefObject, type ReactNode } from 'react';
-import { Bone, ChevronLeft, ChevronRight, FlaskConical, Ghost, HelpCircle, Pause, Play, RotateCcw, Users, Volume2, VolumeX, X, Home, Flag, Zap } from 'lucide-react';
+import { Bone, ChevronLeft, ChevronRight, FlaskConical, Ghost, HelpCircle, Pause, Play, RotateCcw, Users, Volume2, VolumeX, X, Home, Flag } from 'lucide-react';
 import { CHARACTERS, ITEMS, TRACK_LENGTH, driftTier, formatTime, useItem, type Input, type RaceResult, type RaceState } from './engine';
 import { SoundControls } from './SoundControls';
 import { Minimap } from './Minimap';
+import { DifficultySelect, type DifficultyProps } from './DifficultySelect';
+import { DIFFICULTIES } from './arcade';
+import { MOTOR_CLASSES, type MotorClass } from './motors';
 
 const LAPS = 3;
 
@@ -31,16 +34,17 @@ export function TopBar({ muted, onMute, onHelp, children }: { muted: boolean; on
   );
 }
 
-export function TitleScreen({ onPlay, onHelp }: { onPlay: () => void; onHelp: () => void }) {
+export function TitleScreen({ onPlay, onHelp, ...difficulty }: { onPlay: () => void; onHelp: () => void } & DifficultyProps) {
   return (
     <div className="title-screen absolute inset-0 z-20 flex flex-col items-center justify-between p-6 pb-5 pointer-events-none overflow-y-auto gap-5">
-      <div className="mt-[8vh] text-center rise">
+      <div className="mt-[4vh] text-center rise">
         <p className="text-xs sm:text-sm tracking-[0.5em] uppercase text-purple-200/80 mb-2">Corrida de monstros sob a lua cheia</p>
         <h1 className="logo-text text-[19vw] sm:text-[9rem] leading-[0.85] flicker" data-testid="text-title">Haunted<br />Kart</h1>
       </div>
-      <div className="flex flex-col items-center gap-4 pointer-events-auto rise" style={{ animationDelay: '.3s' }}>
+      <div className="flex flex-col items-center gap-2.5 pointer-events-auto rise" style={{ animationDelay: '.3s' }}>
         <button data-testid="button-play" onClick={onPlay} className="btn-pumpkin pulse-ring rounded-2xl px-14 py-4 text-2xl font-extrabold uppercase tracking-wider">Jogar</button>
         <button data-testid="button-instructions" onClick={onHelp} className="text-purple-200 underline underline-offset-4 decoration-orange-400/60 hover:text-orange-300">Como jogar</button>
+        <DifficultySelect {...difficulty} />
         <SoundControls />
         <p className="text-xs text-purple-300/60 font-mono">3 voltas no Cemitério da Colina Torta</p>
       </div>
@@ -61,7 +65,7 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
   );
 }
 
-export function SelectScreen({ selectedId, onSelect, onRace, onBack }: { selectedId: number; onSelect: (id: number) => void; onRace: () => void; onBack: () => void }) {
+export function SelectScreen({ selectedId, onSelect, onRace, onBack, ...difficulty }: { selectedId: number; onSelect: (id: number) => void; onRace: () => void; onBack: () => void } & DifficultyProps) {
   const idx = Math.max(0, CHARACTERS.findIndex(c => c.id === selectedId));
   const ch = CHARACTERS[idx];
   const step = (d: number) => onSelect(CHARACTERS[(idx + d + CHARACTERS.length) % CHARACTERS.length].id);
@@ -94,6 +98,7 @@ export function SelectScreen({ selectedId, onSelect, onRace, onBack }: { selecte
           <Stat label="Aceleração" value={ch.acceleration} color="#c78bff" />
           <Stat label="Dirigibilidade" value={ch.handling} color="#9be255" />
         </div>
+        <DifficultySelect {...difficulty} />
         <button data-testid="button-race" onClick={onRace} className="btn-pumpkin rounded-2xl py-3.5 text-xl font-extrabold uppercase tracking-wider flex items-center justify-center gap-2 md:mt-auto">
           <Flag className="w-5 h-5" /> Correr
         </button>
@@ -117,6 +122,8 @@ interface Snap {
   lap: number; pos: number; total: number; time: number; speed: number; lane: number; item: string | null;
   countdown: number; message: string; boost: boolean; drift: number; offroad: boolean; wrongWay: boolean;
   pickup: boolean; used: boolean; hit: boolean; racers: { id: number; progress: number }[];
+  roulette: number; recovery: number; hop: number; direction: number; draft: number; drafting: boolean; difficulty: string;
+  motorClass: MotorClass;
 }
 
 export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceState>; pausedRef: MutableRefObject<boolean> }) {
@@ -131,6 +138,9 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
         item: p.item, countdown: race.countdown, message: race.messageTime > 0 ? race.message : '', boost: p.boost > 0, drift: p.drifting ? p.driftCharge : 0,
         offroad: p.offroad, wrongWay: p.wrongWay > 0.35, pickup: p.pickupFlash > 0, used: p.useFlash > 0, hit: p.hitFlash > 0,
         racers: race.racers.map(r => ({ id: r.id, progress: r.progress })),
+        roulette: p.roulette, recovery: p.recovery, hop: p.hop, direction: p.driftDirection,
+        draft: p.draftCharge, drafting: p.draftActive, difficulty: DIFFICULTIES[race.difficulty].label,
+        motorClass: race.motorClass,
       });
     };
     tick();
@@ -138,13 +148,15 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
     return () => { clearInterval(id); };
   }, [raceRef, pausedRef]);
   if (!s) return null;
-  const item = s.item ? ITEMS.find(i => i.id === s.item) : null;
+  const item = s.roulette > 0 ? ITEMS[Math.floor(s.time * 14) % ITEMS.length] : s.item ? ITEMS.find(i => i.id === s.item) : null;
   const cdNum = Math.ceil(s.countdown);
   const showCd = s.countdown > 0;
   const showGo = s.countdown <= 0 && s.time < 0.8;
   return (
     <div className="absolute inset-0 z-20 pointer-events-none no-select" data-testid="race-hud"
-      data-lane={s.lane.toFixed(3)} data-drift={s.drift.toFixed(3)} data-drift-tier={driftTier(s.drift)} data-offroad={s.offroad} data-boost={s.boost} data-item={s.item ?? ''}>
+      data-lane={s.lane.toFixed(3)} data-drift={s.drift.toFixed(3)} data-drift-tier={driftTier(s.drift)} data-drift-direction={s.direction} data-hop={s.hop.toFixed(3)}
+      data-offroad={s.offroad} data-boost={s.boost} data-item={s.item ?? ''} data-item-ready={!!s.item && s.roulette === 0}
+      data-countdown={s.countdown.toFixed(3)} data-roulette={s.roulette > 0} data-difficulty={s.difficulty} data-motor-class={s.motorClass} data-recovery={s.recovery.toFixed(2)}>
       {s.hit && <div className="absolute inset-0 bg-red-500/15 border-4 border-red-400/40" />}
       {s.used && <div className="absolute inset-0 border-4 border-violet-300/40 shadow-[inset_0_0_60px_#9b65dc33]" />}
       <div className="absolute top-3 left-3 flex gap-2 items-start">
@@ -156,14 +168,17 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
           <div className="text-[10px] uppercase tracking-[0.3em] text-purple-300">Volta</div>
           <div className="font-mono text-2xl font-bold" data-testid="text-lap">{s.lap}/{LAPS}</div>
           <div className="font-mono text-sm text-orange-200" data-testid="text-timer">{formatTime(s.time)}</div>
+          <div className="text-[9px] text-purple-300">{s.difficulty}</div>
         </div>
       </div>
-      <button type="button" onClick={() => useItem(raceRef.current)} aria-label={item ? `Usar ${item.name}` : 'Sem item'}
+      <button type="button" disabled={!s.item || s.roulette > 0 || pausedRef.current} onClick={() => useItem(raceRef.current)} aria-label={s.roulette > 0 ? 'Sorteando poder' : item ? `Usar ${item.name}` : 'Sem item'}
         className={`absolute top-[4.5rem] right-3 md:top-16 panel rounded-2xl w-20 h-20 grid place-items-center pointer-events-auto transition-transform ${s.pickup ? 'scale-110 ring-4 ring-orange-300/70' : ''}`}
         data-testid="status-item" style={{ borderColor: item?.color }}>
-        {item ? <div className="flex flex-col items-center" style={{ color: item.color }}><ItemIcon id={item.id} className="w-9 h-9" /><span className="text-[9px] uppercase tracking-wider mt-0.5 text-center leading-tight px-1">{item.name}</span></div>
+        {item ? <div className={`flex flex-col items-center ${s.roulette > 0 ? 'item-roulette' : ''}`} style={{ color: item.color }}><ItemIcon id={item.id} className="w-8 h-8" /><span className="text-[9px] uppercase tracking-wider mt-0.5 text-center leading-tight px-1">{s.roulette > 0 ? 'Sorteando...' : item.name}</span>
+          {s.roulette === 0 && <span className="mouse-only text-[8px] text-purple-100 mt-0.5">ESPAÇO USA</span>}</div>
           : <span className="text-[10px] uppercase tracking-widest text-purple-400/70">Sem item</span>}
       </button>
+      <div data-testid="text-motor-class" className="absolute top-40 right-3 panel rounded-lg px-2 py-1 text-[10px] text-cyan-200">Motor: {MOTOR_CLASSES[s.motorClass].label}</div>
       <Minimap racers={s.racers} />
       <div className="race-speed absolute bottom-4 left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 text-center md:text-right">
         <div className={`font-mono font-bold text-4xl md:text-5xl leading-none ${s.boost ? 'text-cyan-200' : 'text-orange-100'}`} data-testid="text-speed">{Math.round(Math.abs(s.speed) * 3.6)}</div>
@@ -173,6 +188,8 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
           <div className="h-2 w-28 rounded-full bg-purple-950 overflow-hidden ml-auto mr-auto md:mr-0"><div className="h-full" style={{ width: `${Math.min(100, s.drift / 1.5 * 100)}%`, background: driftTier(s.drift) === 2 ? '#ff9b37' : '#58cfff' }} /></div>
         </div>}
         {s.offroad && <div className="text-xs text-orange-200 font-bold mt-1" data-testid="warning-offroad">Fora da pista!</div>}
+        {s.recovery > 0 && <div className="text-xs text-cyan-200 mt-1">Proteção após impacto</div>}
+        {s.drafting && <div className="text-xs text-cyan-200 mt-1" data-testid="status-draft">Vácuo {Math.min(100, Math.round(s.draft / 1.1 * 100))}%</div>}
       </div>
       {s.message && <div key={s.message} className="absolute top-[30%] left-1/2 -translate-x-1/2 panel rounded-2xl px-5 py-2 text-orange-200 font-semibold rise w-max max-w-[90vw] text-center" data-testid="text-message">{s.message}</div>}
       {s.wrongWay && <div role="alert" data-testid="warning-wrong-way" className="absolute top-[43%] left-1/2 -translate-x-1/2 panel rounded-2xl px-5 py-3 text-orange-200 font-extrabold w-max max-w-[90vw] text-center">Contramão!<span className="block text-xs font-normal">Acelere para seguir na direção certa.</span></div>}
@@ -183,7 +200,7 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
 }
 
 type Key = keyof Input;
-function TouchBtn({ k, touchRef, className, children, label }: { k: Key; touchRef: MutableRefObject<Input>; className: string; children: ReactNode; label: string }) {
+function TouchBtn({ k, touchRef, className, children, label, onPress }: { k: Key; touchRef: MutableRefObject<Input>; className: string; children: ReactNode; label: string; onPress?: () => void }) {
   const [on, setOn] = useState(false);
   const set = (v: boolean) => { touchRef.current[k] = v; setOn(v); };
   useEffect(() => {
@@ -194,7 +211,7 @@ function TouchBtn({ k, touchRef, className, children, label }: { k: Key; touchRe
   }, [k, touchRef]);
   return (
     <button aria-label={label} data-testid={`touch-${k}`}
-      onPointerDown={e => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); set(true); }}
+      onPointerDown={e => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); set(true); onPress?.(); }}
       onPointerUp={() => set(false)} onPointerCancel={() => set(false)} onLostPointerCapture={() => set(false)}
       onContextMenu={e => e.preventDefault()}
       className={`pointer-events-auto rounded-full grid place-items-center font-bold uppercase text-xs transition-transform ${on ? 'scale-90 brightness-125' : ''} ${className}`}>
@@ -203,7 +220,7 @@ function TouchBtn({ k, touchRef, className, children, label }: { k: Key; touchRe
   );
 }
 
-export function TouchControls({ touchRef }: { touchRef: MutableRefObject<Input> }) {
+export function TouchControls({ touchRef, onItem }: { touchRef: MutableRefObject<Input>; onItem: () => void }) {
   useEffect(() => {
     const release = () => { (Object.keys(touchRef.current) as Key[]).forEach(k => { touchRef.current[k] = false; }); };
     window.addEventListener('blur', release);
@@ -218,8 +235,8 @@ export function TouchControls({ touchRef }: { touchRef: MutableRefObject<Input> 
         <TouchBtn k="right" touchRef={touchRef} label="Direita" className={`w-20 h-20 ${ghost}`}><ChevronRight className="w-9 h-9" /></TouchBtn>
       </div>
       <div className="grid grid-cols-2 gap-2.5 items-end">
-        <TouchBtn k="item" touchRef={touchRef} label="Usar item" className="w-14 h-14 bg-purple-600/70 border border-purple-300/50 text-white">Item</TouchBtn>
-        <TouchBtn k="drift" touchRef={touchRef} label="Derrapar" className="w-14 h-14 bg-cyan-700/60 border border-cyan-200/50 text-white"><Zap className="w-5 h-5" /></TouchBtn>
+        <TouchBtn k="item" touchRef={touchRef} onPress={onItem} label="Usar poder" className="w-14 h-14 bg-purple-600/70 border border-purple-300/50 text-white">Poder</TouchBtn>
+        <TouchBtn k="drift" touchRef={touchRef} label="Pular e derrapar" className="w-14 h-14 bg-cyan-700/60 border border-cyan-200/50 text-white"><span className="text-[9px]">Derrapar</span></TouchBtn>
         <TouchBtn k="brake" touchRef={touchRef} label="Frear" className={`w-16 h-16 ${ghost}`}>Freio</TouchBtn>
         <TouchBtn k="accelerate" touchRef={touchRef} label="Acelerar" className="w-20 h-20 btn-pumpkin">Gás</TouchBtn>
       </div>
@@ -227,13 +244,14 @@ export function TouchControls({ touchRef }: { touchRef: MutableRefObject<Input> 
   );
 }
 
-export function ResultsScreen({ results, playerId, onAgain, onChange, onMenu }: { results: RaceResult[]; playerId: number; onAgain: () => void; onChange: () => void; onMenu: () => void }) {
+export function ResultsScreen({ results, motorClass, playerId, onAgain, onChange, onMenu }: { results: RaceResult[]; motorClass: MotorClass; playerId: number; onAgain: () => void; onChange: () => void; onMenu: () => void }) {
   const sorted = [...results].sort((a, b) => a.position - b.position);
   return (
     <div className="absolute inset-0 z-20 flex items-start justify-center p-4 overflow-y-auto">
       <div className="panel rounded-3xl p-5 md:p-8 w-full max-w-lg rise my-auto">
         <p className="text-xs uppercase tracking-[0.4em] text-purple-300 text-center">Resultado final</p>
-        <h2 className="logo-text text-6xl text-center mb-5">Bandeirada!</h2>
+        <h2 className="logo-text text-6xl text-center mb-2">Bandeirada!</h2>
+        <p data-testid="result-motor-class" className="text-center text-cyan-200 text-sm mb-4">Velocidade do motor: {MOTOR_CLASSES[motorClass].label}</p>
         <ol className="space-y-1.5">
           {sorted.map(r => {
             const c = CHARACTERS.find(ch => ch.id === r.id);
@@ -282,8 +300,8 @@ export function PauseOverlay({ onResume, onRestart, onMenu }: { onResume: () => 
 
 export function Instructions({ onClose }: { onClose: () => void }) {
   const rows: [string, string][] = [
-    ['W / Seta para cima', 'Acelerar'], ['S / Seta para baixo', 'Frear; segure parado para dar ré'], ['A D / Setas laterais', 'Virar'],
-    ['Espaço', 'Derrapar: faíscas azuis → laranjas; solte para turbinar'], ['E', 'Usar item'], ['Esc / P', 'Pausar'],
+    ['Seta para cima / W', 'Acelerar'], ['Seta para baixo / S', 'Frear; segure parado para dar ré'], ['Setas laterais / A D', 'Virar'],
+    ['Espaço', 'Usar o poder após a roleta'], ['Shift (ou Z/X)', 'Pular e derrapar; solte para turbinar'], ['Esc / P', 'Pausar'],
   ];
   return (
     <div className="absolute inset-0 z-50 flex items-start justify-center bg-[#12081f]/75 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
@@ -291,13 +309,15 @@ export function Instructions({ onClose }: { onClose: () => void }) {
         <button onClick={onClose} aria-label="Fechar" data-testid="button-close-help" className="absolute top-4 right-4 btn-ghost rounded-xl w-9 h-9 grid place-items-center"><X className="w-4 h-4" /></button>
         <h2 className="logo-text text-5xl mb-1">Como jogar</h2>
         <p className="text-purple-200 text-sm mb-4">Três voltas pelo cemitério. Pegue as caixas roxas, solte as maldições e cruze a linha antes dos outros monstros.</p>
-        <p className="text-orange-200 text-sm mb-4">Largada especial: comece a acelerar logo depois de aparecer o 1 e segure até o Vai! Acelerar cedo demais faz o motor engasgar.</p>
+        <p className="text-cyan-200 text-sm mb-4">Velocidade do motor: Normal para o ritmo clássico, Turbo para mais velocidade e aceleração de todos os karts. A dificuldade muda o desafio dos adversários, independentemente do motor.</p>
+        <p className="text-orange-200 text-sm mb-4">Largada especial: aperte a seta para cima (ou W) quando aparecer o 1 e segure até o Vai! Espaço só usa poderes. Acelerar cedo demais faz o motor engasgar.</p>
+        <p className="text-purple-200 text-sm mb-4">Na derrapagem, a direção fica travada: use as setas para fechar ou abrir o arco. Faíscas azuis dão turbo; laranjas dão superturbo. Siga de perto outro kart para pegar vácuo e passe pelas faixas ciano para ganhar impulso. Após um ataque, você recebe proteção breve.</p>
         <div className="mouse-only space-y-1.5 mb-4">
           {rows.map(([k, v]) => (
             <div key={k} className="flex justify-between gap-3 text-sm border-b border-purple-800/50 pb-1.5"><span className="font-mono text-orange-300">{k}</span><span className="text-right text-purple-100">{v}</span></div>
           ))}
         </div>
-        <p className="touch-only text-sm text-purple-100 mb-4">Toque nas setas à esquerda para virar. À direita: Gás, Freio, raio para derrapar e Item.</p>
+        <p className="touch-only text-sm text-purple-100 mb-4">Toque nas setas à esquerda para virar. À direita: Gás acelera, Freio freia ou dá ré, Derrapar pula e derrapa, e Poder usa o item sorteado.</p>
         <h3 className="text-xs uppercase tracking-[0.3em] text-purple-300 mb-2">Itens</h3>
         <div className="grid grid-cols-5 gap-2">
           {ITEMS.map(it => (

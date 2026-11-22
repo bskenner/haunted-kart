@@ -7,6 +7,8 @@ import { Kart } from './models';
 import { World, getTrackData, getGlowTexture, Pumpkin } from './world';
 import { audio } from './audio';
 import { StaticScenery } from './StaticScenery';
+import { BoostPads } from './BoostPads';
+import { MOTOR_CLASSES } from './motors';
 
 export type Phase = 'title' | 'select' | 'race' | 'results';
 
@@ -53,9 +55,11 @@ function RacerMesh({ index, raceRef }: { index: number; raceRef: MutableRefObjec
     prevLane.current = r.lane;
     const t = clock.elapsedTime;
     const follow = 1 - Math.exp(-14 * dt);
-    inner.current.rotation.y = r.spin > 0 ? t * 14 : THREE.MathUtils.lerp(inner.current.rotation.y % (Math.PI * 2), r.steering * (r.drifting ? 0.42 : 0.09), follow);
+    inner.current.rotation.y = r.spin > 0 ? t * 14 : THREE.MathUtils.lerp(inner.current.rotation.y % (Math.PI * 2), r.drifting ? r.driftDirection * 0.4 + r.steering * 0.07 : r.steering * 0.09, follow);
     inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, THREE.MathUtils.clamp(dl * 0.025, -0.14, 0.14), follow);
-    inner.current.position.y = Math.abs(Math.sin(t * 20 + index)) * Math.min(0.05, Math.abs(r.speed) * 0.002);
+    inner.current.position.y = Math.sin(Math.PI * (1 - r.hop / 0.3)) * (r.hop > 0 ? 0.48 : 0)
+      + Math.abs(Math.sin(t * 20 + index)) * Math.min(0.05, Math.abs(r.speed) * 0.002);
+    inner.current.visible = r.recovery === 0 || Math.floor(t * 14) % 3 !== 0;
     if (flame.current) { const on = r.boost > 0; flame.current.visible = on; flame.current.scale.setScalar(on ? 0.8 + Math.sin(t * 40) * 0.25 : 1); }
     if (shield.current) shield.current.visible = r.shield > 0;
     if (spark.current) {
@@ -197,8 +201,9 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
   const lookT = useMemo(() => new THREE.Vector3(), []);
   useFrame(({ clock }, dt) => {
     const t = clock.elapsedTime;
-    const k = 1 - Math.exp(-dt * (phase === 'race' ? 6 : 2.5));
     const race = raceRef.current;
+    const motor = MOTOR_CLASSES[race.motorClass];
+    const k = 1 - Math.exp(-dt * (phase === 'race' ? motor.camera : 2.5));
     if (phase === 'select') {
       const s = getTrackData().showcase;
       const narrow = size.width < 768;
@@ -208,9 +213,10 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
       const r = race.racers[0];
       const pose = place(r.progress, r.lane, _p);
       const fx = Math.sin(pose.angle), fz = Math.cos(pose.angle);
-      const back = size.width < 768 ? 10 : 8.5;
+      const back = (size.width < 768 ? 10 : 8.5) + (race.motorClass === 'turbo' ? 0.5 : 0);
       target.set(_p.x - fx * back, _p.y + 4.2, _p.z - fz * back);
-      lookT.set(_p.x + fx * 6, _p.y + 1.2, _p.z + fz * 6);
+      const lookAhead = race.motorClass === 'turbo' ? 7.2 : 6;
+      lookT.set(_p.x + fx * lookAhead, _p.y + 1.2, _p.z + fz * lookAhead);
       if (race.countdown > 0) target.y += race.countdown * 0.6;
     } else {
       // title/results: cinematic orbit around a racer
@@ -272,6 +278,7 @@ export function Scene(props: SceneProps) {
     <>
       <RenderBudget />
       <World />
+      <BoostPads />
       <group key={raceVersion}>
         {Array.from({ length: count }).map((_, i) => <RacerMesh key={i} index={i} raceRef={raceRef} />)}
         <ItemBoxes raceRef={raceRef} />
