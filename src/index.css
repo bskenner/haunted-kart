@@ -152,5 +152,20 @@
 @media (pointer: coarse) { .mouse-only { display: none !important; } }
 @media (pointer: coarse) {
   .race-speed { bottom: 13rem; left: 1rem; right: auto; transform: none; translate: none; text-align: left; }
+  .panel { backdrop-filter: none; }
+  .noise::after { display: none; }
+  .touch-only.no-select { touch-action: none; }
 }
-.no-select { user-select: none; -webkit-user-select: none; touch-action: none; }
+.no-select { user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+canvas { touch-action: none; }
+input[type="range"] { touch-action: pan-x; }
+.title-screen { pointer-events: auto; }
+.title-screen > div { flex-shrink: 0; }
+@media (max-height: 700px) {
+  .title-screen .logo-text { font-size: clamp(4.5rem, 18vh, 7rem); }
+}
+@media (max-height: 560px) {
+  .title-screen > div:first-child { margin-top: 0; }
+  .title-screen .logo-text { font-size: 4.5rem; }
+  .minimap { width: 64px; height: 64px; top: 7rem; bottom: auto; }
+}

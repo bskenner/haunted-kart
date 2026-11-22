@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { KeyboardControls } from '@react-three/drei';
 import { CHARACTERS, createRace, type Input, type RaceResult } from './engine';
@@ -35,7 +35,7 @@ export default function HauntedKart() {
   const [paused, setPaused] = useState(false);
   const [ready, setReady] = useState(false);
   const [help, setHelp] = useState(false);
-  const [muted, setMuted] = useState(audio.muted);
+  const { muted } = useSyncExternalStore(audio.subscribe, audio.snapshot);
   const [results, setResults] = useState<RaceResult[]>([]);
   const helpWasPaused = useRef(false);
 
@@ -48,13 +48,14 @@ export default function HauntedKart() {
     }));
   }, []);
   const setPause = useCallback((v: boolean) => {
-    if (v) { clearInputs(); audio.setEngine(0, false); }
+    if (v) clearInputs();
+    audio.setPaused(v);
     pausedRef.current = v; setPaused(v);
   }, [clearInputs]);
   const newRace = useCallback((id: number) => { clearInputs(); raceRef.current = createRace(id); setRaceVersion(v => v + 1); }, [clearInputs]);
   const startRace = (id: number) => { audio.start(); setPause(false); newRace(id); setPhase('race'); };
   const toMenu = () => { setPause(false); newRace(selectedId); setPhase('title'); };
-  const onFinish = useCallback(() => { setResults([...raceRef.current.results]); audio.blip(660, 0.5, 'triangle'); setPhase('results'); }, []);
+  const onFinish = useCallback(() => { setResults([...raceRef.current.results]); setPhase('results'); }, []);
   const onDemoEnd = useCallback(() => newRace(CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)].id), [newRace]);
   const openHelp = () => {
     helpWasPaused.current = pausedRef.current;
@@ -67,14 +68,24 @@ export default function HauntedKart() {
   }, [phase, setPause]);
 
   useEffect(() => {
+    audio.setScene(phase === 'race' ? 'race' : phase === 'results' ? 'results' : 'menu');
+  }, [phase]);
+  useEffect(() => {
+    const unlock = () => audio.start();
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
+  }, []);
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+      if (e.target instanceof HTMLInputElement) return;
+      if (phase === 'race' && !pausedRef.current && (e.code === 'Space' || e.code.startsWith('Arrow'))) e.preventDefault();
       if (e.repeat) return;
       if (e.code === 'Escape' && help) closeHelp();
       else if ((e.code === 'Escape' || e.code === 'KeyP') && phase === 'race' && !help) setPause(!pausedRef.current);
     };
     const onBlur = () => { clearInputs(); if (phase === 'race') setPause(true); };
-    const onVisibility = () => { if (document.hidden) onBlur(); };
+    const onVisibility = () => { audio.setHidden(document.hidden); if (document.hidden) onBlur(); };
     window.addEventListener('keydown', onKey);
     window.addEventListener('blur', onBlur);
     document.addEventListener('visibilitychange', onVisibility);
@@ -85,7 +96,7 @@ export default function HauntedKart() {
     };
   }, [phase, help, setPause, clearInputs, closeHelp]);
 
-  const toggleMute = () => { audio.start(); audio.setMuted(!muted); setMuted(!muted); };
+  const toggleMute = () => { audio.start(); audio.setMuted(!muted); };
 
   if (!webgl) {
     return (
@@ -102,7 +113,7 @@ export default function HauntedKart() {
   return (
     <KeyboardControls map={keyMap}>
       <div className="relative w-full h-[100dvh] overflow-hidden night-bg noise no-select">
-        <Canvas dpr={[1, 1.5]} gl={{ antialias: true, powerPreference: 'high-performance' }} camera={{ fov: 60, near: 0.1, far: 700, position: [0, 40, 60] }} onCreated={() => setReady(true)}>
+        <Canvas dpr={1} gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={() => setReady(true)}>
           <Suspense fallback={null}>
             <Scene phase={phase} raceRef={raceRef} raceVersion={raceVersion} selectedId={selectedId} touchRef={touchRef} pausedRef={pausedRef} onFinish={onFinish} onDemoEnd={onDemoEnd} />
           </Suspense>
@@ -123,7 +134,7 @@ export default function HauntedKart() {
         </TopBar>
 
         {phase === 'title' && <TitleScreen onPlay={() => { audio.start(); setPhase('select'); }} onHelp={openHelp} />}
-        {phase === 'select' && <SelectScreen selectedId={selectedId} onSelect={id => { setSelectedId(id); audio.blip(520, 0.08, 'triangle', 0.1); }} onRace={() => startRace(selectedId)} onBack={() => setPhase('title')} />}
+        {phase === 'select' && <SelectScreen selectedId={selectedId} onSelect={id => { setSelectedId(id); audio.selectMonster(id); }} onRace={() => startRace(selectedId)} onBack={() => setPhase('title')} />}
         {phase === 'race' && (
           <>
             <HUD key={raceVersion} raceRef={raceRef} pausedRef={pausedRef} />

@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { CHARACTERS, ITEMS, TRACK_LENGTH, trackPoint, updateRace, type Input, type RaceState } from './engine';
 import { Kart } from './models';
 import { World, getTrackData, getGlowTexture, Pumpkin } from './world';
+import { audio } from './audio';
+import { StaticScenery } from './StaticScenery';
 
 export type Phase = 'title' | 'select' | 'race' | 'results';
 
@@ -50,23 +52,24 @@ function RacerMesh({ index, raceRef }: { index: number; raceRef: MutableRefObjec
     const dl = (r.lane - prevLane.current) / Math.max(dt, 0.001);
     prevLane.current = r.lane;
     const t = clock.elapsedTime;
-    inner.current.rotation.y = r.spin > 0 ? t * 14 : THREE.MathUtils.lerp(inner.current.rotation.y % (Math.PI * 2), r.drifting ? -Math.sign(dl) * 0.35 : 0, 0.15);
-    inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, THREE.MathUtils.clamp(dl * 0.03, -0.18, 0.18), 0.2);
+    const follow = 1 - Math.exp(-14 * dt);
+    inner.current.rotation.y = r.spin > 0 ? t * 14 : THREE.MathUtils.lerp(inner.current.rotation.y % (Math.PI * 2), r.steering * (r.drifting ? 0.42 : 0.09), follow);
+    inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, THREE.MathUtils.clamp(dl * 0.025, -0.14, 0.14), follow);
     inner.current.position.y = Math.abs(Math.sin(t * 20 + index)) * Math.min(0.05, Math.abs(r.speed) * 0.002);
     if (flame.current) { const on = r.boost > 0; flame.current.visible = on; flame.current.scale.setScalar(on ? 0.8 + Math.sin(t * 40) * 0.25 : 1); }
     if (shield.current) shield.current.visible = r.shield > 0;
     if (spark.current) {
       spark.current.visible = r.drifting;
-      const c = r.driftCharge > 1.6 ? '#ff7a1a' : r.driftCharge > 0.8 ? '#c78bff' : '#9de8ff';
+      const c = r.driftCharge >= 1.5 ? '#ff9b37' : '#58cfff';
       (spark.current.material as THREE.SpriteMaterial).color.set(c);
-      spark.current.scale.setScalar(1 + Math.sin(t * 30) * 0.3);
+      spark.current.scale.setScalar((r.driftCharge >= 1.5 ? 1.7 : 1) + Math.sin(t * 30) * 0.2);
     }
     if (r.slow > 0) inner.current.rotation.z += Math.sin(t * 30) * 0.05;
   });
   return (
     <group ref={outer}>
       <group ref={inner}>
-        <Kart index={charIndex(racer.id)} color={ch.color} accent={ch.accent} />
+        <StaticScenery><Kart index={charIndex(racer.id)} color={ch.color} accent={ch.accent} /></StaticScenery>
         <mesh ref={flame} position={[0, 0.5, -1.6]} rotation={[-Math.PI / 2, 0, 0]} visible={false}>
           <coneGeometry args={[0.3, 1.2, 8]} />
           <meshBasicMaterial color="#9de8ff" transparent opacity={0.8} toneMapped={false} />
@@ -170,7 +173,7 @@ function Showcase({ selectedId, phase }: { selectedId: number; phase: Phase }) {
       <mesh position={[0, 0.3, 0]}><cylinderGeometry args={[3.2, 3.6, 0.6, 10]} /><meshStandardMaterial color="#4b3f63" roughness={1} /></mesh>
       <mesh position={[0, 0.62, 0]}><cylinderGeometry args={[2.9, 2.9, 0.04, 40]} /><meshBasicMaterial color={ch.accent} transparent opacity={0.45} /></mesh>
       <group ref={spin} position={[0, 0.62, 0]}>
-        <Kart key={idx} index={idx} color={ch.color} accent={ch.accent} />
+        <StaticScenery key={idx}><Kart index={idx} color={ch.color} accent={ch.accent} /></StaticScenery>
       </group>
       {[0, 1, 2, 3, 4].map(k => {
         const a = k / 5 * Math.PI * 2;
@@ -188,7 +191,7 @@ function Showcase({ selectedId, phase }: { selectedId: number; phase: Phase }) {
 }
 
 function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject<RaceState> }) {
-  const { camera, size } = useThree();
+  const { camera, size, gl } = useThree();
   const look = useRef(new THREE.Vector3());
   const target = useMemo(() => new THREE.Vector3(), []);
   const lookT = useMemo(() => new THREE.Vector3(), []);
@@ -221,6 +224,12 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
     camera.position.lerp(target, k);
     look.current.lerp(lookT, k);
     camera.lookAt(look.current);
+    const perspective = camera as THREE.PerspectiveCamera;
+    const desiredFov = phase === 'race' && race.racers[0].boost > 0 ? 68 : 60;
+    const fov = THREE.MathUtils.lerp(perspective.fov, desiredFov, 1 - Math.exp(-5 * dt));
+    if (Math.abs(fov - perspective.fov) > 0.005) { perspective.fov = fov; perspective.updateProjectionMatrix(); }
+    const fovLabel = perspective.fov.toFixed(0);
+    if (gl.domElement.dataset.cameraFov !== fovLabel) gl.domElement.dataset.cameraFov = fovLabel;
   });
   return null;
 }
@@ -234,7 +243,7 @@ function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd }: Omit
     const dt = Math.min(delta, 0.5);
     const race = raceRef.current;
     if (phase === 'race') {
-      if (pausedRef.current) return;
+      if (pausedRef.current) { audio.sync(race, true); return; }
       const k = get() as Record<string, boolean>;
       const tch = touchRef.current;
       const input: Input = {
@@ -246,6 +255,7 @@ function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd }: Omit
         item: !!k.item || tch.item,
       };
       updateRace(race, dt, input);
+      audio.sync(race, false);
       if (race.finished && notified.current !== race) { notified.current = race; onFinish(); }
     } else {
       updateRace(race, dt, DEMO);
@@ -260,17 +270,37 @@ export function Scene(props: SceneProps) {
   const count = raceRef.current.racers.length;
   return (
     <>
+      <RenderBudget />
       <World />
       <group key={raceVersion}>
         {Array.from({ length: count }).map((_, i) => <RacerMesh key={i} index={i} raceRef={raceRef} />)}
         <ItemBoxes raceRef={raceRef} />
       </group>
       <Hazards raceRef={raceRef} />
-      <Showcase selectedId={props.selectedId} phase={props.phase} />
+      {props.phase === 'select' && <Showcase selectedId={props.selectedId} phase={props.phase} />}
       <CameraRig phase={props.phase} raceRef={raceRef} />
       <Loop phase={props.phase} raceRef={raceRef} touchRef={props.touchRef} pausedRef={props.pausedRef} onFinish={props.onFinish} onDemoEnd={props.onDemoEnd} />
     </>
   );
+}
+
+function RenderBudget() {
+  const { setDpr, gl } = useThree();
+  const sample = useRef({ time: 0, frames: 0, dpr: 1 });
+  useFrame((_, delta) => {
+    const s = sample.current;
+    s.time += delta; s.frames++;
+    if (s.time < 2) return;
+    const fps = s.frames / s.time;
+    const next = fps < 48 ? Math.max(0.65, s.dpr - 0.1) : fps > 58 ? Math.min(1, s.dpr + 0.05) : s.dpr;
+    if (next !== s.dpr) { setDpr(next); s.dpr = next; }
+    // Read-only performance evidence; it never affects simulation speed.
+    gl.domElement.dataset.renderFps = fps.toFixed(1);
+    gl.domElement.dataset.renderDpr = s.dpr.toFixed(2);
+    gl.domElement.dataset.drawCalls = String(gl.info.render.calls);
+    s.time = 0; s.frames = 0;
+  });
+  return null;
 }
 
 export const itemInfo = (id: string | null) => (id ? ITEMS.find(i => i.id === id) ?? null : null);

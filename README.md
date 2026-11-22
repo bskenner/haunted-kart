@@ -11,20 +11,24 @@ Jogo de corrida no estilo Mario Kart, com tema de Halloween. Escolha um monstro,
 
 Cada monstro tem visual próprio e atributos diferentes de **Velocidade**, **Aceleração** e **Dirigibilidade**:
 
-| Personagem   | Estilo                         | Destaque              |
-| ------------ | ------------------------------ | --------------------- |
-| Fantasma     | Translúcido, branco-azulado    | Alta dirigibilidade   |
-| Zumbi        | Verde, decaído                 | Alta aceleração       |
-| Múmia        | Bege, enrolada em ataduras     | Equilibrada           |
-| Frankenstein | Grandão, verde, com parafusos  | Maior velocidade      |
+| Personagem   | Estilo                         | Destaque               |
+| ------------ | ------------------------------ | ---------------------- |
+| Fantasma     | Translúcido, branco-azulado    | Alta dirigibilidade    |
+| Zumbi        | Verde, decaído                 | Alta aceleração        |
+| Múmia        | Bege, enrolada em ataduras     | Equilibrada            |
+| Frankenstein | Grandão, verde, com parafusos  | Maior velocidade       |
 | Vampiro      | Capa vermelha e preta          | Velocidade e arrancada |
-| Lobisomem    | Pelagem marrom e prateada      | Curvas e aceleração   |
+| Lobisomem    | Pelagem marrom e prateada      | Curvas e aceleração    |
 
-Os outros cinco monstros correm contra você, controlados pelo jogo.
+Os outros cinco monstros correm contra você, controlados pelo jogo. Ao escolher um personagem, ele emite um som próprio (lamento, gemido, uivo e assim por diante).
 
 ## Como jogar
 
-Corrida de **3 voltas**. Na pista há caixas de itens. Derrape nas curvas e solte para ganhar um impulso.
+Corrida de **3 voltas**, com minimapa, aviso de contramão e redução de velocidade fora da pista. Nas curvas, derrape e solte para ganhar um miniturbo (faíscas **azuis** e, se segurar mais, **laranjas**).
+
+### Largada especial
+
+Na contagem 3-2-1-Vai, comece a acelerar logo depois de aparecer o **1** e segure até o **Vai!** para ganhar um impulso de largada. Acelerar cedo demais faz o motor engasgar.
 
 ### Teclado
 
@@ -33,7 +37,7 @@ Corrida de **3 voltas**. Na pista há caixas de itens. Derrape nas curvas e solt
 | W ou seta para cima | Acelerar |
 | S ou seta para baixo | Frear |
 | A / D ou setas laterais | Virar |
-| Espaço | Derrapar (segure na curva e solte para o turbo) |
+| Espaço | Derrapar: faíscas azuis → laranjas; solte para turbinar |
 | E | Usar item |
 | Esc ou P | Pausar |
 
@@ -48,6 +52,17 @@ Há botões na tela para acelerar, frear, virar, derrapar e usar item.
 - **Impulso fantasma** — turbo temporário
 - **Escudo de ossos** — proteção por alguns segundos
 - **Poção escorregadia** — deixa uma poça atrás do kart
+
+## Música e sons
+
+Toda a trilha e os efeitos são originais, gerados no navegador (Web Audio API). Não há músicas com direitos autorais.
+
+- Música de fundo no menu e uma faixa mais intensa na corrida
+- Motor que muda com a velocidade, derrapagem, turbo, coleta e uso de itens, impactos, apitos da largada, volta concluída, jingle da última volta e fanfarra de chegada
+- Som de assinatura ao selecionar cada monstro
+- Controles de **Música** e **Efeitos sonoros**, além de silenciar, na tela inicial e na pausa
+- As preferências são salvas no navegador
+- O áudio só começa depois da primeira interação (clique, toque ou tecla), por regra dos navegadores
 
 ## Rodar localmente
 
@@ -70,4 +85,4 @@ npm run preview # servir a versão gerada
 
 ## Observações
 
-O jogo foi criado e está hospedado no Replit. Este repositório contém o código-fonte do jogo (interface em português do Brasil), pronto para rodar fora do monorepo do Replit. O toque foi validado por emulação no Chromium; Safari e Firefox ainda não foram testados à parte.
+O jogo foi criado e está hospedado no Replit. Este repositório contém o código-fonte do jogo (interface em português do Brasil), pronto para rodar fora do monorepo do Replit. O toque e o desempenho em dispositivos móveis foram validados por emulação no Chromium; celulares físicos, Safari e Firefox ainda não foram testados à parte.
