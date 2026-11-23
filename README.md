@@ -42,6 +42,8 @@ Na tela inicial e na escolha do personagem você define duas opções independen
 
 ### Teclado
 
+O mundo 3D tem um visual inspirado no Nintendo 64: resolução interna baixa com aumento pixelado, texturas pequenas e nitidez tipo nearest, formas mais baixa-poli e um céu em degradê roxo de pôr do sol.
+
 A direção do kart do jogador é **totalmente manual**: as setas esquerda/direita viram o heading no chão, e sem input o kart segue em linha reta (não alinha sozinho com a pista). A IA continua seguindo o traçado.
 
 O esquema principal usa as setas e o espaço:
