@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { KeyboardControls } from '@react-three/drei';
+import * as THREE from 'three';
 import { CHARACTERS, createRace, useItem, type Input, type RaceResult } from './engine';
 import { Scene, type Phase } from './scene';
 import { HUD, Instructions, PauseButton, PauseOverlay, ResultsScreen, SelectScreen, TitleScreen, TopBar, TouchControls } from './ui';
@@ -18,14 +19,14 @@ function hasWebGL() {
 
 const firstId: number = CHARACTERS[0]?.id ?? 0;
 
-function retroRenderDpr() {
-  if (typeof window === 'undefined') return 0.3;
-  return Math.min(0.48, 400 / window.innerWidth, 300 / window.innerHeight);
+function preferredRenderDpr() {
+  if (typeof window === 'undefined') return 1;
+  return Math.min(2, Math.max(1, window.devicePixelRatio || 1));
 }
 
 export default function HauntedKart() {
   const [webgl] = useState(hasWebGL);
-  const [renderDpr, setRenderDpr] = useState(retroRenderDpr);
+  const [renderDpr, setRenderDpr] = useState(preferredRenderDpr);
   const [phase, setPhase] = useState<Phase>('title');
   const [selectedId, setSelectedId] = useState<number>(firstId);
   const [difficulty, setDifficulty] = useState<Difficulty>(loadDifficulty);
@@ -42,7 +43,7 @@ export default function HauntedKart() {
   const helpWasPaused = useRef(false);
 
   useEffect(() => {
-    const updateRenderDpr = () => setRenderDpr(retroRenderDpr());
+    const updateRenderDpr = () => setRenderDpr(preferredRenderDpr());
     window.addEventListener('resize', updateRenderDpr);
     return () => window.removeEventListener('resize', updateRenderDpr);
   }, []);
@@ -63,7 +64,15 @@ export default function HauntedKart() {
   const newRace = useCallback((id: number) => { clearInputs(); raceRef.current = createRace(id, difficulty, motorClass); setRaceVersion(v => v + 1); }, [clearInputs, difficulty, motorClass]);
   const chooseDifficulty = (value: Difficulty) => { setDifficulty(value); saveDifficulty(value); };
   const chooseMotor = (value: MotorClass) => { setMotorClass(value); saveMotorClass(value); };
-  const startRace = (id: number) => { audio.start(); setPause(false); newRace(id); setPhase('race'); };
+  const startRace = (id: number) => {
+    audio.start(); setPause(false); newRace(id); setPhase('race');
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && /^(BUTTON|SELECT|INPUT)$/.test(active.tagName)) active.blur();
+      const canvas = document.querySelector('canvas');
+      if (canvas) { canvas.tabIndex = 0; canvas.focus({ preventScroll: true }); }
+    });
+  };
   const toMenu = () => { setPause(false); newRace(selectedId); setPhase('title'); };
   const onFinish = useCallback(() => { setResults([...raceRef.current.results]); setPhase('results'); }, []);
   const onDemoEnd = useCallback(() => newRace(CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)].id), [newRace]);
@@ -80,21 +89,6 @@ export default function HauntedKart() {
   useEffect(() => {
     audio.setScene(phase === 'race' ? 'race' : phase === 'results' ? 'results' : 'menu');
   }, [phase]);
-  useEffect(() => {
-    if (phase !== 'race') return;
-    const id = requestAnimationFrame(() => {
-      const active = document.activeElement;
-      if (active instanceof HTMLElement && (active.tagName === 'BUTTON' || active.tagName === 'SELECT' || active.tagName === 'INPUT')) {
-        active.blur();
-      }
-      const canvas = document.querySelector('canvas');
-      if (canvas instanceof HTMLCanvasElement) {
-        canvas.tabIndex = 0;
-        canvas.focus({ preventScroll: true });
-      }
-    });
-    return () => cancelAnimationFrame(id);
-  }, [phase, raceVersion]);
   useEffect(() => {
     const unlock = () => audio.start();
     window.addEventListener('pointerdown', unlock, { once: true });
@@ -141,7 +135,13 @@ export default function HauntedKart() {
   return (
     <KeyboardControls map={keyMap}>
       <div className="relative w-full h-[100dvh] overflow-hidden night-bg noise no-select">
-        <Canvas dpr={renderDpr} style={{ imageRendering: 'pixelated' }} gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={({ gl }) => { gl.domElement.tabIndex = 0; setReady(true); }}>
+        <Canvas dpr={renderDpr} gl={{ antialias: true, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={({ gl }) => {
+          gl.outputColorSpace = THREE.SRGBColorSpace;
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.12;
+          gl.domElement.tabIndex = 0;
+          setReady(true);
+        }}>
           <Suspense fallback={null}>
             <Scene phase={phase} raceRef={raceRef} raceVersion={raceVersion} selectedId={selectedId} touchRef={touchRef} pausedRef={pausedRef} onFinish={onFinish} onDemoEnd={onDemoEnd} />
           </Suspense>

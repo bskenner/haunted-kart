@@ -294,7 +294,7 @@ export function Scene(props: SceneProps) {
 }
 
 function RenderBudget() {
-  const { setDpr, gl, size } = useThree();
+  const { setDpr, gl } = useThree();
   const sample = useRef({ time: 0, frames: 0 });
   useFrame((_, delta) => {
     const s = sample.current;
@@ -302,9 +302,10 @@ function RenderBudget() {
     if (s.time < 2) return;
     const fps = s.frames / s.time;
     const current = gl.getPixelRatio();
-    const preferred = Math.min(0.48, 400 / size.width, 300 / size.height);
-    const next = fps < 48 ? Math.max(preferred * 0.72, current - 0.03)
-      : fps > 58 ? Math.min(preferred, current + 0.02) : current;
+    const preferred = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    const minimum = Math.max(0.7, preferred * 0.65);
+    const next = fps < 48 ? Math.max(minimum, current - 0.15)
+      : fps > 58 ? Math.min(preferred, current + 0.1) : current;
     if (Math.abs(next - current) > 0.005) setDpr(next);
     // Read-only performance evidence; it never affects simulation speed.
     gl.domElement.dataset.renderFps = fps.toFixed(1);
