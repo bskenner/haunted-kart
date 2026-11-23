@@ -63,19 +63,23 @@ function rng(seed: number) {
 }
 
 type V3 = [number, number, number];
-function strip(samples: S[], f0: (s: S) => V3, f1: (s: S) => V3, color?: (i: number) => THREE.Color) {
+function strip(samples: S[], f0: (s: S) => V3, f1: (s: S) => V3, color?: (i: number) => THREE.Color, repeat: [number, number] = [1, 1]) {
   const n = samples.length;
   const pos: number[] = [];
   const col: number[] = [];
+  const uv: number[] = [];
   const idx: number[] = [];
   for (let i = 0; i <= n; i++) {
     const s = samples[i % n];
     pos.push(...f0(s), ...f1(s));
+    const u = i / n * repeat[0];
+    uv.push(u, 0, u, repeat[1]);
     if (color) { const c = color(i); col.push(c.r, c.g, c.b, c.r, c.g, c.b); }
   }
   for (let i = 0; i < n; i++) { const q = i * 2; idx.push(q, q + 1, q + 2, q + 1, q + 3, q + 2); }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   if (color) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
@@ -99,11 +103,55 @@ export function getGlowTexture() {
   return glowTex;
 }
 
+type RetroTextures = { asphalt: THREE.Texture; grass: THREE.Texture; stone: THREE.Texture; fence: THREE.Texture };
+let retroTextures: RetroTextures | null = null;
+function makePixelTexture(base: string, colors: string[], seed: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, 64, 64);
+  const random = rng(seed);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      ctx.fillStyle = colors[Math.floor(random() * colors.length)];
+      ctx.fillRect(x * 8, y * 8, 8, 8);
+    }
+  }
+  for (let i = 0; i < 22; i++) {
+    ctx.fillStyle = colors[Math.floor(random() * colors.length)];
+    ctx.fillRect(Math.floor(random() * 32) * 2, Math.floor(random() * 32) * 2, 2, 2);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 1;
+  return texture;
+}
+
+export function getRetroTextures(): RetroTextures {
+  if (!retroTextures) {
+    retroTextures = {
+      asphalt: makePixelTexture('#302d3c', ['#262635', '#3a3546', '#4a394a', '#302c3a'], 23),
+      grass: makePixelTexture('#496a32', ['#38542c', '#62803b', '#77813e', '#3c5e36'], 59),
+      stone: makePixelTexture('#53456b', ['#413553', '#6e5a82', '#7f688e', '#382e4a'], 137),
+      fence: makePixelTexture('#30253d', ['#211a2d', '#483753', '#5d4764', '#292139'], 281),
+    };
+    retroTextures.grass.repeat.set(36, 36);
+  }
+  return retroTextures;
+}
+
 function Track() {
   const td = getTrackData();
+  const textures = getRetroTextures();
   const geos = useMemo(() => {
     const { samples, groundY } = td;
-    const road = strip(samples, s => lat(s, HALF, 0.02), s => lat(s, -HALF, 0.02));
+    const road = strip(samples, s => lat(s, HALF, 0.02), s => lat(s, -HALF, 0.02), undefined, [20, 5]);
     const roadCol = new THREE.Color('#171923');
     const dash = new THREE.Color('#d9c9ef');
     const center = strip(samples, s => lat(s, 0.16, 0.05), s => lat(s, -0.16, 0.05), i => (Math.floor(i / 5) % 2 ? dash : roadCol));
@@ -177,19 +225,19 @@ function Track() {
   }, [fence, td]);
 
   const start = trackPoint(0);
-  const iron = <meshStandardMaterial color="#1a1222" metalness={0.7} roughness={0.45} />;
+  const iron = <meshStandardMaterial map={textures.fence} color="#ffffff" metalness={0} roughness={1} flatShading />;
   return (
     <group>
       <mesh geometry={geos.road}>
-        <meshStandardMaterial color="#2b2340" roughness={0.82} side={THREE.DoubleSide} />
+        <meshStandardMaterial map={textures.asphalt} color="#ffffff" roughness={1} flatShading side={THREE.DoubleSide} />
       </mesh>
       <mesh geometry={geos.center}>
-        <meshStandardMaterial vertexColors roughness={0.8} side={THREE.DoubleSide} />
+        <meshStandardMaterial vertexColors roughness={1} flatShading side={THREE.DoubleSide} />
       </mesh>
-      <mesh geometry={geos.curbL}><meshStandardMaterial vertexColors roughness={0.6} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={geos.curbR}><meshStandardMaterial vertexColors roughness={0.6} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={geos.skirtL}><meshStandardMaterial color="#3a2a52" roughness={1} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={geos.skirtR}><meshStandardMaterial color="#3a2a52" roughness={1} side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={geos.curbL}><meshStandardMaterial vertexColors roughness={1} flatShading side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={geos.curbR}><meshStandardMaterial vertexColors roughness={1} flatShading side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={geos.skirtL}><meshStandardMaterial map={textures.stone} color="#ffffff" roughness={1} flatShading side={THREE.DoubleSide} /></mesh>
+      <mesh geometry={geos.skirtR}><meshStandardMaterial map={textures.stone} color="#ffffff" roughness={1} flatShading side={THREE.DoubleSide} /></mesh>
       <instancedMesh ref={postsRef} args={[undefined, undefined, fence.posts.length]}>
         <boxGeometry args={[0.12, 1.4, 0.12]} />{iron}
       </instancedMesh>
@@ -201,22 +249,23 @@ function Track() {
       </instancedMesh>
       <instancedMesh ref={pillarRef} args={[undefined, undefined, Math.max(1, fence.pillars.length)]}>
         <cylinderGeometry args={[0.7, 0.9, 1, 8]} />
-        <meshStandardMaterial color="#4a3b5e" roughness={1} />
+        <meshStandardMaterial map={textures.stone} color="#ffffff" roughness={1} flatShading />
       </instancedMesh>
       {/* start gate */}
       <group position={[start.x, start.y, start.z]} rotation={[0, start.angle, 0]}>
-        {Array.from({ length: 12 }).map((_, i) => (
+        {Array.from({ length: 16 }).map((_, i) => (
           <mesh key={i} position={[-HALF + 0.5 + i, 0.06, (i % 2) * 0.5 - 0.25]}>
             <boxGeometry args={[1, 0.02, 0.5]} />
             <meshStandardMaterial color={i % 2 ? '#f2e8ff' : '#140e1c'} />
           </mesh>
         ))}
-        {Array.from({ length: 12 }).map((_, i) => (
+        {Array.from({ length: 16 }).map((_, i) => (
           <mesh key={`b${i}`} position={[-HALF + 0.5 + i, 0.06, ((i + 1) % 2) * 0.5 - 0.25]}>
             <boxGeometry args={[1, 0.02, 0.5]} />
             <meshStandardMaterial color={i % 2 ? '#140e1c' : '#f2e8ff'} />
           </mesh>
         ))}
+        <group position={[0, 0, 26]}>
         {[-1, 1].map(s => (
           <group key={s} position={[s * (HALF + 1), 0, 0]}>
             <mesh position={[0, 2.6, 0]}><boxGeometry args={[0.7, 5.2, 0.7]} /><meshStandardMaterial color="#3d2e52" roughness={1} /></mesh>
@@ -224,15 +273,16 @@ function Track() {
           </group>
         ))}
         <mesh position={[0, 4.6, 0]}>
-          <boxGeometry args={[2 * HALF + 2.6, 0.9, 0.3]} />
+          <boxGeometry args={[2 * HALF + 2.6, 0.65, 0.3]} />
           <meshStandardMaterial color="#ff7a1a" emissive="#ff4d00" emissiveIntensity={0.5} />
         </mesh>
-        {Array.from({ length: 14 }).map((_, i) => (
+        {Array.from({ length: 16 }).map((_, i) => (
           <mesh key={`c${i}`} position={[-HALF - 0.3 + i, 4.6, 0.16]}>
             <boxGeometry args={[0.45, 0.45, 0.02]} />
             <meshBasicMaterial color={i % 2 ? '#1a0f2e' : '#ffe3b8'} />
           </mesh>
         ))}
+        </group>
       </group>
     </group>
   );
@@ -242,8 +292,8 @@ export function Pumpkin({ position, scale = 1, rotation = 0 }: { position: V3; s
   return (
     <group position={position} scale={scale} rotation={[0, rotation, 0]}>
       <mesh scale={[1, 0.78, 1]}>
-        <sphereGeometry args={[0.5, 14, 10]} />
-        <meshStandardMaterial color="#ff7a1a" emissive="#ff4800" emissiveIntensity={0.25} roughness={0.6} />
+        <sphereGeometry args={[0.5, 8, 5]} />
+        <meshStandardMaterial color="#ff8c21" emissive="#ff4800" emissiveIntensity={0.28} roughness={1} flatShading />
       </mesh>
       <mesh position={[0, 0.43, 0]}><cylinderGeometry args={[0.05, 0.08, 0.2, 6]} /><meshStandardMaterial color="#3b5a1e" /></mesh>
       {[-0.17, 0.17].map(x => (
@@ -260,7 +310,7 @@ export function Pumpkin({ position, scale = 1, rotation = 0 }: { position: V3; s
 function DeadTree({ seed, position, scale }: { seed: number; position: V3; scale: number }) {
   const branches = useMemo(() => {
     const r = rng(seed);
-    return Array.from({ length: 5 }).map(() => ({ y: 1.6 + r() * 2.2, a: r() * Math.PI * 2, tilt: 0.6 + r() * 0.6, len: 1 + r() * 1.4 }));
+    return Array.from({ length: 4 }).map(() => ({ y: 1.6 + r() * 2.2, a: r() * Math.PI * 2, tilt: 0.6 + r() * 0.6, len: 1 + r() * 1.4 }));
   }, [seed]);
   const mat = <meshStandardMaterial color="#1e1628" roughness={1} />;
   return (
@@ -336,7 +386,7 @@ function Scatter() {
 function Castle() {
   const { castle, center } = getTrackData();
   const face = Math.atan2(center.x - castle.x, center.z - castle.z);
-  const stone = <meshStandardMaterial color="#4b3f63" roughness={1} />;
+  const stone = <meshStandardMaterial map={getRetroTextures().stone} color="#ffffff" roughness={1} flatShading />;
   const win = <meshBasicMaterial color="#ff9a3c" toneMapped={false} />;
   const towers: [number, number, number][] = [[-9, 0, 14], [9, 0, 11], [-9, -8, 9], [10, -9, 17]];
   return (
@@ -347,7 +397,7 @@ function Castle() {
       <mesh position={[-9, 3, -4]}><boxGeometry args={[1.6, 6, 8]} />{stone}</mesh>
       {towers.map(([x, z, h], i) => (
         <group key={i} position={[x, 0, z]}>
-          <mesh position={[0, h / 2, 0]}><cylinderGeometry args={[2, 2.3, h, 10]} />{stone}</mesh>
+          <mesh position={[0, h / 2, 0]}><cylinderGeometry args={[2, 2.3, h, 6]} />{stone}</mesh>
           {Array.from({ length: 8 }).map((_, k) => (k === 3 && i % 2 ? null : (
             <mesh key={k} position={[Math.cos(k / 8 * Math.PI * 2) * 2, h + 0.4, Math.sin(k / 8 * Math.PI * 2) * 2]}>
               <boxGeometry args={[0.7, 0.8, 0.7]} />{stone}
@@ -367,7 +417,7 @@ function Castle() {
 function Chapel() {
   const { chapel, center } = getTrackData();
   const face = Math.atan2(center.x - chapel.x, center.z - chapel.z);
-  const stone = <meshStandardMaterial color="#574a6e" roughness={1} />;
+  const stone = <meshStandardMaterial map={getRetroTextures().stone} color="#ffffff" roughness={1} flatShading />;
   return (
     <group position={chapel} rotation={[0, face, 0]}>
       <mesh position={[0, 2.5, -3]}><boxGeometry args={[6, 5, 10]} />{stone}</mesh>
@@ -457,7 +507,7 @@ function Fog() {
   return (
     <>
       <points ref={fogRef} geometry={geo}>
-        <pointsMaterial map={tex} size={16} color="#b9a3e6" transparent opacity={0.13} depthWrite={false} sizeAttenuation />
+        <pointsMaterial map={tex} size={12} color="#b9a3e6" transparent opacity={0.08} depthWrite={false} sizeAttenuation />
       </points>
       <points ref={wispRef} geometry={wisps}>
         <pointsMaterial map={tex} size={0.9} color="#ffb04a" transparent opacity={0.9} depthWrite={false} blending={THREE.AdditiveBlending} sizeAttenuation />
@@ -471,7 +521,7 @@ function Moon() {
   const p: V3 = [center.x - 140, 95, center.z - 210];
   return (
     <group position={p}>
-      <mesh><sphereGeometry args={[16, 32, 24]} /><meshBasicMaterial color="#fff0d2" fog={false} /></mesh>
+      <mesh><sphereGeometry args={[16, 12, 8]} /><meshBasicMaterial color="#fff0d2" fog={false} /></mesh>
       <sprite scale={[110, 110, 1]}>
         <spriteMaterial map={getGlowTexture()} color="#e7c8ff" transparent opacity={0.55} depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
       </sprite>
@@ -479,22 +529,58 @@ function Moon() {
   );
 }
 
+function SkyDome() {
+  const geometry = useMemo(() => {
+    const radius = 450;
+    const g = new THREE.SphereGeometry(radius, 24, 14);
+    const positions = g.getAttribute('position');
+    const colors: number[] = [];
+    const stops = [
+      { at: -1, color: new THREE.Color('#201a38') },
+      { at: -0.32, color: new THREE.Color('#45265f') },
+      { at: -0.12, color: new THREE.Color('#a34f78') },
+      { at: -0.02, color: new THREE.Color('#f18a4c') },
+      { at: 0.12, color: new THREE.Color('#8c4b8a') },
+      { at: 0.48, color: new THREE.Color('#56438b') },
+      { at: 1, color: new THREE.Color('#263b78') },
+    ];
+    const color = new THREE.Color();
+    for (let i = 0; i < positions.count; i++) {
+      const height = positions.getY(i) / radius;
+      let stop = 0;
+      while (stop < stops.length - 2 && height > stops[stop + 1].at) stop++;
+      const a = stops[stop], b = stops[stop + 1];
+      color.copy(a.color).lerp(b.color, THREE.MathUtils.clamp((height - a.at) / (b.at - a.at), 0, 1));
+      colors.push(color.r, color.g, color.b);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    return g;
+  }, []);
+  return (
+    <mesh geometry={geometry} renderOrder={-1000}>
+      <meshBasicMaterial vertexColors side={THREE.BackSide} toneMapped={false} fog={false} depthWrite={false} />
+    </mesh>
+  );
+}
+
 export function World() {
   const td = getTrackData();
+  const textures = getRetroTextures();
   return (
     <>
-      <color attach="background" args={['#1d1035']} />
-      <fogExp2 attach="fog" args={['#2a1648', 0.0065]} />
-      <hemisphereLight args={['#8d6bff', '#2a0f24', 0.85]} />
-      <ambientLight intensity={0.25} color="#b3a0ff" />
-      <directionalLight position={[-140, 95, -210]} intensity={1.6} color="#d6ddff" />
-      <Stars radius={260} depth={40} count={700} factor={5} saturation={0.4} fade speed={0.4} />
+      <color attach="background" args={['#41285e']} />
+      <fogExp2 attach="fog" args={['#77517e', 0.006]} />
+      <hemisphereLight args={['#efa0d5', '#496335', 1.05]} />
+      <ambientLight intensity={0.4} color="#ffd2a0" />
+      <directionalLight position={[-140, 95, -210]} intensity={1.8} color="#fff0c1" />
+      <SkyDome />
+      <Stars radius={260} depth={40} count={520} factor={5} saturation={0.85} fade speed={0.4} />
       <Moon />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[td.center.x, td.groundY, td.center.z]}>
         <circleGeometry args={[td.span * 1.4 + 80, 48]} />
-        <meshStandardMaterial color="#251a3a" roughness={1} />
+        <meshStandardMaterial map={textures.grass} color="#ffffff" roughness={1} flatShading />
       </mesh>
-      <Track />
+      <StaticScenery><Track /></StaticScenery>
       <StaticScenery>
         <Scatter />
         <Castle />

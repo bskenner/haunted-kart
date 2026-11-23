@@ -294,18 +294,21 @@ export function Scene(props: SceneProps) {
 }
 
 function RenderBudget() {
-  const { setDpr, gl } = useThree();
-  const sample = useRef({ time: 0, frames: 0, dpr: 1 });
+  const { setDpr, gl, size } = useThree();
+  const sample = useRef({ time: 0, frames: 0 });
   useFrame((_, delta) => {
     const s = sample.current;
     s.time += delta; s.frames++;
     if (s.time < 2) return;
     const fps = s.frames / s.time;
-    const next = fps < 48 ? Math.max(0.65, s.dpr - 0.1) : fps > 58 ? Math.min(1, s.dpr + 0.05) : s.dpr;
-    if (next !== s.dpr) { setDpr(next); s.dpr = next; }
+    const current = gl.getPixelRatio();
+    const preferred = Math.min(0.48, 400 / size.width, 300 / size.height);
+    const next = fps < 48 ? Math.max(preferred * 0.72, current - 0.03)
+      : fps > 58 ? Math.min(preferred, current + 0.02) : current;
+    if (Math.abs(next - current) > 0.005) setDpr(next);
     // Read-only performance evidence; it never affects simulation speed.
     gl.domElement.dataset.renderFps = fps.toFixed(1);
-    gl.domElement.dataset.renderDpr = s.dpr.toFixed(2);
+    gl.domElement.dataset.renderDpr = gl.getPixelRatio().toFixed(2);
     gl.domElement.dataset.drawCalls = String(gl.info.render.calls);
     s.time = 0; s.frames = 0;
   });

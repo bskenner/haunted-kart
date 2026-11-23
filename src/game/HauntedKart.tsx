@@ -18,8 +18,14 @@ function hasWebGL() {
 
 const firstId: number = CHARACTERS[0]?.id ?? 0;
 
+function retroRenderDpr() {
+  if (typeof window === 'undefined') return 0.3;
+  return Math.min(0.48, 400 / window.innerWidth, 300 / window.innerHeight);
+}
+
 export default function HauntedKart() {
   const [webgl] = useState(hasWebGL);
+  const [renderDpr, setRenderDpr] = useState(retroRenderDpr);
   const [phase, setPhase] = useState<Phase>('title');
   const [selectedId, setSelectedId] = useState<number>(firstId);
   const [difficulty, setDifficulty] = useState<Difficulty>(loadDifficulty);
@@ -34,6 +40,12 @@ export default function HauntedKart() {
   const { muted } = useSyncExternalStore(audio.subscribe, audio.snapshot);
   const [results, setResults] = useState<RaceResult[]>([]);
   const helpWasPaused = useRef(false);
+
+  useEffect(() => {
+    const updateRenderDpr = () => setRenderDpr(retroRenderDpr());
+    window.addEventListener('resize', updateRenderDpr);
+    return () => window.removeEventListener('resize', updateRenderDpr);
+  }, []);
 
   const clearInputs = useCallback(() => {
     Object.keys(touchRef.current).forEach(key => { touchRef.current[key as keyof Input] = false; });
@@ -129,7 +141,7 @@ export default function HauntedKart() {
   return (
     <KeyboardControls map={keyMap}>
       <div className="relative w-full h-[100dvh] overflow-hidden night-bg noise no-select">
-        <Canvas dpr={1} gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={({ gl }) => { gl.domElement.tabIndex = 0; setReady(true); }}>
+        <Canvas dpr={renderDpr} style={{ imageRendering: 'pixelated' }} gl={{ antialias: false, powerPreference: 'high-performance', stencil: false }} camera={{ fov: 60, near: 0.1, far: 500, position: [0, 40, 60] }} onCreated={({ gl }) => { gl.domElement.tabIndex = 0; setReady(true); }}>
           <Suspense fallback={null}>
             <Scene phase={phase} raceRef={raceRef} raceVersion={raceVersion} selectedId={selectedId} touchRef={touchRef} pausedRef={pausedRef} onFinish={onFinish} onDemoEnd={onDemoEnd} />
           </Suspense>
