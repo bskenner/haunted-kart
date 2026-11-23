@@ -157,7 +157,7 @@
   .touch-only.no-select { touch-action: none; }
 }
 .no-select { user-select: none; -webkit-user-select: none; touch-action: manipulation; }
-canvas { touch-action: none; image-rendering: pixelated; image-rendering: crisp-edges; }
+canvas { touch-action: none; }
 input[type="range"] { touch-action: pan-x; }
 @keyframes item-reel { from { transform: translateY(-3px); filter: brightness(1.6); } to { transform: translateY(3px); filter: brightness(1); } }
 .item-roulette { animation: item-reel .1s linear infinite alternate; }
