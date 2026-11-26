@@ -68,7 +68,8 @@ export function trackPoint(t: number) {
     if (arc[mid] <= distance) lo = mid;
     else hi = mid;
   }
-  const u = (lo + (distance - arc[lo]) / (arc[lo + 1] - arc[lo])) / SAMPLES;
+  const span = arc[lo + 1] - arc[lo];
+  const u = (lo + (span > 0 ? (distance - arc[lo]) / span : 0)) / SAMPLES;
   const p = rawPoint(u);
   const ahead = rawPoint(u + 0.0001);
   const behind = rawPoint(u - 0.0001);
@@ -107,18 +108,37 @@ export function chaseCameraScreenX(progress: number, lane: number, cameraLane = 
 
 export const CHECKPOINTS = 16;
 
-/** Nearest centerline sample to a free world position, with signed lane offset. */
-export function projectOnTrack(x: number, z: number) {
-  let bestI = 0;
-  let bestD = Infinity;
-  for (let i = 0; i < SAMPLES; i++) {
-    const p = trackPoint(i / SAMPLES);
-    const d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
-    if (d < bestD) { bestD = d; bestI = i; }
+const TRACK_SAMPLES = Array.from({ length: SAMPLES }, (_, i) => {
+  const p = trackPoint(i / SAMPLES);
+  return { x: p.x, y: p.y, z: p.z, angle: p.angle, progress: (i / SAMPLES) * TRACK_LENGTH };
+});
+/** Nearest centerline sample to a free world position, with signed lane offset.
+ *  When a reference progress is given, the search stays on the local stretch of
+ *  track so the tight south hook cannot snap to the opposite fold. */
+export function projectOnTrack(x: number, z: number, referenceProgress?: number) {
+  let progress: number;
+  if (referenceProgress === undefined) {
+    let bestI = 0;
+    let best = Infinity;
+    for (let i = 0; i < SAMPLES; i++) {
+      const sample = TRACK_SAMPLES[i];
+      const dist2 = (sample.x - x) * (sample.x - x) + (sample.z - z) * (sample.z - z);
+      if (dist2 < best) { best = dist2; bestI = i; }
+    }
+    progress = TRACK_SAMPLES[bestI].progress;
+  } else {
+    progress = wrap(referenceProgress, TRACK_LENGTH);
   }
-  const p = trackPoint(bestI / SAMPLES);
+  // One tangent step from the known progress. Iterating toward the Euclidean
+  // nearest point would climb the inside of the tight south hook and snap
+  // several units ahead in a single frame.
+  const cap = referenceProgress === undefined ? 0.5 : 1.0;
+  const p0 = trackPoint(progress / TRACK_LENGTH);
+  const along = clamp((x - p0.x) * Math.sin(p0.angle) + (z - p0.z) * Math.cos(p0.angle), -cap, cap);
+  progress = wrap(progress + along, TRACK_LENGTH);
+  const p = trackPoint(progress / TRACK_LENGTH);
   const lane = (x - p.x) * Math.cos(p.angle) - (z - p.z) * Math.sin(p.angle);
-  return { progress: (bestI / SAMPLES) * TRACK_LENGTH, lane, angle: p.angle, y: p.y, dist: Math.sqrt(bestD) };
+  return { progress, lane, angle: p.angle, y: p.y, dist: Math.hypot(p.x - x, p.z - z) };
 }
 
 /** Place a racer on the rail pose. Used for the grid, AI, and test teleports. */
@@ -162,7 +182,7 @@ export function authorizeProgress(racer: Racer, nearestOnLap: number) {
 }
 
 function constrainPlayerToWalls(racer: Racer) {
-  const proj = projectOnTrack(racer.x, racer.z);
+  const proj = projectOnTrack(racer.x, racer.z, racer.progress);
   if (Math.abs(proj.lane) < WALL_EDGE) return false;
   const side = Math.sign(proj.lane) || 1;
   const nx = Math.cos(proj.angle) * side;
@@ -215,6 +235,7 @@ export interface RaceState {
   events: RaceEvent[]; eventSeq: number; throttleHeld: boolean; launchAt: number | null;
   difficulty: Difficulty;
   motorClass: MotorClass;
+  announcedLap: number;
 }
 function emit(race: RaceState, type: EventKind, value?: number, item?: string) {
   race.events.push({ seq: ++race.eventSeq, type, value, item });
@@ -240,7 +261,7 @@ export function createRace(characterId: number, difficulty: Difficulty = 'normal
     time: 0, countdown: 3, finished: false, results: [], hazards: [], projectiles: [], difficulty, motorClass,
     boxes: [0.34, 0.50, 0.68, 0.84].flatMap(t => [-4, 0, 4].map(lane => ({ t, lane, cooldown: 0 }))),
     message: '', messageTime: 0, aiTimers: ids.map((_, i) => 7 + i * 1.8), itemHeld: false,
-    events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null,
+    events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null, announcedLap: 0,
   };
   race.racers.forEach(r => placeRacer(r));
   return race;
@@ -294,17 +315,17 @@ const circularDistance = (a: number, b: number) => {
   return Math.min(d, 1 - d) * TRACK_LENGTH;
 };
 
-export function updateRace(race: RaceState, delta: number, input: Input) {
+export function updateRace(race: RaceState, delta: number, input: Input, manualPlayer = true) {
   // Integrate real elapsed time in small steps. Dropping everything over 50ms made
   // low-frame-rate phones play in slow motion; substeps also prevent missed hits.
   let remaining = Number.isFinite(delta) ? clamp(delta, 0, 0.5) : 0;
   while (remaining > 0.000001 && !race.finished) {
     const dt = Math.min(remaining, 1 / 60);
-    stepRace(race, dt, input);
+    stepRace(race, dt, input, manualPlayer);
     remaining -= dt;
   }
 }
-function stepRace(race: RaceState, dt: number, input: Input) {
+function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true) {
   if (race.finished) return;
   if (race.countdown > 0) {
     if (input.accelerate && !race.throttleHeld) race.launchAt = race.countdown;
@@ -357,11 +378,12 @@ function stepRace(race: RaceState, dt: number, input: Input) {
     const ahead = trackPoint(t + 0.014);
     const curve = Math.atan2(Math.sin(ahead.angle - p.angle), Math.cos(ahead.angle - p.angle));
     let maxSpeed = (22 + stats.speed * 0.95) * motor.speed;
-    let throttle = index === 0 ? input.accelerate : true;
-    const braking = index === 0 && input.brake;
-    const steering = index === 0 ? Number(input.left) - Number(input.right) : 0;
-    const canDrift = index === 0 && input.drift && racer.speed > 8 && racer.spin === 0 && !braking;
-    if (index === 0) {
+    const isPlayer = index === 0 && manualPlayer;
+    let throttle = isPlayer ? input.accelerate : true;
+    const braking = isPlayer && input.brake;
+    const steering = isPlayer ? Number(input.left) - Number(input.right) : 0;
+    const canDrift = isPlayer && input.drift && racer.speed > 8 && racer.spin === 0 && !braking;
+    if (isPlayer) {
       if (input.drift && !racer.driftHeld && racer.speed > 2 && racer.spin === 0) {
         racer.hop = 0.3; emit(race, 'hop');
       }
@@ -372,7 +394,7 @@ function stepRace(race: RaceState, dt: number, input: Input) {
       racer.driftHeld = input.drift;
     }
     const drifting = canDrift && racer.driftDirection !== 0;
-    if (index > 0) {
+    if (!isPlayer) {
       // Bounded +/- adjustments around the middle of the field, not teleports
       // or a hidden speed penalty targeting only the human player.
       const catchup = clamp((pack - racer.progress) / 150, -0.035, difficulty.catchup);
@@ -474,7 +496,7 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         racer.speed = Math.sign(racer.speed) * Math.max(0, Math.abs(racer.speed) - drag);
       }
     }
-    if (index === 0) {
+    if (isPlayer) {
       racer.x += Math.sin(racer.heading) * racer.speed * dt;
       racer.z += Math.cos(racer.heading) * racer.speed * dt;
       if (constrainPlayerToWalls(racer) && racer.wallCooldown === 0) {
@@ -482,7 +504,7 @@ function stepRace(race: RaceState, dt: number, input: Input) {
         racer.wallCooldown = 0.55;
         emit(race, 'wall');
       }
-      const proj = projectOnTrack(racer.x, racer.z);
+      const proj = projectOnTrack(racer.x, racer.z, racer.progress);
       racer.y = proj.y;
       racer.lane = proj.lane;
       racer.offroad = Math.abs(proj.lane) > ROAD_EDGE;
@@ -526,7 +548,8 @@ function stepRace(race: RaceState, dt: number, input: Input) {
       if (index === 0) emit(race, 'finish');
     } else if (index === 0) {
       const lap = Math.floor(racer.progress / TRACK_LENGTH);
-      if (lap > Math.floor(prevProgress / TRACK_LENGTH) && lap > 0) {
+      if (lap > Math.floor(prevProgress / TRACK_LENGTH) && lap > race.announcedLap) {
+        race.announcedLap = lap;
         emit(race, lap === 2 ? 'finalLap' : 'lap', lap + 1);
         announce(race, lap === 2 ? 'Última volta! Assombre a concorrência!' : 'Volta 2! A corrida continua!');
       }
@@ -535,8 +558,8 @@ function stepRace(race: RaceState, dt: number, input: Input) {
   if (bumpRacers(race, TRACK_LENGTH)) emit(race, 'bump');
   race.racers.forEach((racer, index) => {
     if (racer.finishTime !== null) return;
-    const proj = projectOnTrack(racer.x, racer.z);
-    if (index === 0) {
+    const proj = projectOnTrack(racer.x, racer.z, racer.progress);
+    if (index === 0 && manualPlayer) {
       racer.lane = proj.lane;
       racer.y = proj.y;
     } else {

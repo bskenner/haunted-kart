@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { KEY_MAP } from '../src/game/controls.ts';
 import { BOOST_PADS, bumpRacers, DIFFICULTIES, updateDraft } from '../src/game/arcade.ts';
 import { MOTOR_CLASSES } from '../src/game/motors.ts';
-import { CHARACTERS, ITEMS, TRACK_LENGTH, START_STRAIGHT_LENGTH, WALL_EDGE, ROAD_EDGE, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, type Racer, type Input } from '../src/game/engine.ts';
+import { CHARACTERS, ITEMS, TRACK_LENGTH, START_STRAIGHT_LENGTH, WALL_EDGE, ROAD_EDGE, CHECKPOINTS, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, authorizeProgress, type Racer, type Input } from '../src/game/engine.ts';
 
 const gas: Input = { accelerate: true, brake: false, left: false, right: false, drift: false, item: false };
 const coast: Input = { ...gas, accelerate: false };
@@ -115,8 +115,10 @@ test('item boxes grant all five items, disappear on collection and respawn', () 
       Math.random = () => (i + 0.1) / ITEMS.length;
       const race = ready();
       const box = race.boxes[0];
-      sit(race.racers[0], box.t * TRACK_LENGTH - 1, box.lane);
-      updateRace(race, 1 / 60, coast);
+      sit(race.racers[0], box.t * TRACK_LENGTH - 2, box.lane);
+      race.racers[0].speed = 16;
+      race.racers[0].padCooldown = 10000;
+      for (let n = 0; n < 20 && !race.racers[0].item; n++) updateRace(race, 1 / 60, coast);
       assert.equal(race.racers[0].item, ITEMS[i].id);
       assert.ok(box.cooldown > 0);
       run(race, 4.1, coast);
@@ -520,3 +522,123 @@ test('on a curve with no steer input the kart does not follow the rail', () => {
   const offRail = Math.hypot(p.x - rail.x, p.z - rail.z);
   assert.ok(offRail > 1.2, `should go straight instead of following the curve, offRail=${offRail}`);
 });
+
+test('projection at the south hook stays on the local fold when a reference progress is given', () => {
+  const hookFrom = TRACK_LENGTH * 0.9;
+  const hookTo = TRACK_LENGTH * 0.995;
+  for (const lane of [-7.5, -6.6, -4, 0, 4, 6.6, 7.5]) {
+    for (let progress = hookFrom; progress <= hookTo; progress += 1.5) {
+      const pos = kartPosition(progress, lane);
+      const proj = projectOnTrack(pos.x, pos.z, progress);
+      const delta = Math.min(Math.abs(proj.progress - progress), TRACK_LENGTH - Math.abs(proj.progress - progress));
+      assert.ok(delta < 2.5, `progress jumped ${delta.toFixed(2)} at ${progress.toFixed(1)} lane ${lane}`);
+      assert.ok(Math.abs(proj.lane - lane) < 0.75, `lane ${proj.lane.toFixed(2)} wanted ${lane} at ${progress.toFixed(1)}`);
+    }
+  }
+});
+
+test('following the racing line through the south hook does not stall or snap progress', () => {
+  const race = isolated();
+  const p = race.racers[0];
+  sit(p, TRACK_LENGTH * 0.82, 0);
+  p.speed = 16;
+  p.padCooldown = 10000;
+  let stall = 0;
+  let maxJump = 0;
+  for (let i = 0; i < 60 * 10; i++) {
+    const before = p.progress;
+    const speed = p.speed;
+    const heading = trackPoint(p.progress / TRACK_LENGTH).angle;
+    let err = Math.atan2(Math.sin(heading - p.heading), Math.cos(heading - p.heading));
+    err -= Math.max(-0.4, Math.min(0.4, p.lane * 0.15));
+    const input: Input = {
+      accelerate: speed < 16, brake: speed > 18, left: err > 0.04, right: err < -0.04, drift: false, item: false,
+    };
+    updateRace(race, 1 / 60, input);
+    const t = (p.progress / TRACK_LENGTH) % 1;
+    const d = p.progress - before;
+    if (t > 0.86 && t < 0.995) {
+      if (speed > 8 && d < 0.02) stall++;
+      if (Math.abs(d) > maxJump) maxJump = Math.abs(d);
+    }
+    if (p.progress > TRACK_LENGTH + 8) break;
+  }
+  assert.equal(stall, 0, `progress stalled ${stall} frames in the hook`);
+  assert.ok(maxJump < 0.9, `progress snapped by ${maxJump}`);
+  assert.ok(p.progress > TRACK_LENGTH, 'should complete the hook and cross the line');
+});
+
+test('rail-following attract mode keeps the lead kart on the road', () => {
+  const race = ready();
+  for (let t = 0; t < 18; t += 1 / 60) updateRace(race, 1 / 60, gas, false);
+  const p = race.racers[0];
+  assert.ok(p.progress > 200, `demo lead barely moved (${p.progress})`);
+  for (const racer of race.racers) {
+    assert.ok(Math.abs(racer.lane) < ROAD_EDGE, `racer ${racer.id} left the road at lane ${racer.lane}`);
+  }
+});
+
+test('reversing across the start line does not replay the lap announcement', () => {
+  const race = isolated();
+  const p = race.racers[0];
+  sit(p, TRACK_LENGTH - 6, 0);
+  p.speed = 18;
+  p.padCooldown = 10000;
+  for (let n = 0; n < 120 && p.progress <= TRACK_LENGTH + 3; n++) updateRace(race, 1 / 60, followTrack(race));
+  assert.ok(p.progress > TRACK_LENGTH);
+  assert.equal(race.events.filter(e => e.type === 'lap').length, 1);
+  const brake: Input = { accelerate: false, brake: true, left: false, right: false, drift: false, item: false };
+  let sawWrongWay = false;
+  for (let n = 0; n < 8 * 60; n++) {
+    updateRace(race, 1 / 60, brake);
+    if (p.progress < TRACK_LENGTH && p.wrongWay > 0.35) sawWrongWay = true;
+  }
+  assert.ok(p.progress < TRACK_LENGTH, `should be able to reverse back over the line, progress=${p.progress}`);
+  assert.ok(sawWrongWay, 'reversing over the line should trigger the wrong-way warning');
+  sit(p, TRACK_LENGTH - 6, 0);
+  p.speed = 18;
+  p.wrongWay = 0;
+  p.padCooldown = 10000;
+  for (let n = 0; n < 120 && p.progress <= TRACK_LENGTH; n++) updateRace(race, 1 / 60, followTrack(race));
+  assert.ok(p.progress > TRACK_LENGTH);
+  assert.equal(race.events.filter(e => e.type === 'lap').length, 1, 'lap jingle must not fire again');
+});
+
+test('a fresh race clears mid-race items, hazards, projectiles and timers', () => {
+  const dirty = ready();
+  dirty.countdown = 0;
+  dirty.time = 42;
+  dirty.racers[0].item = 'bats';
+  dirty.racers[0].boost = 2;
+  dirty.racers[0].speed = 20;
+  dirty.hazards.push({ t: 0.4, lane: 0, life: 3, owner: 0 });
+  dirty.projectiles.push({ t: 0.5, lane: 1, life: 2, owner: 0 });
+  dirty.announcedLap = 2;
+  dirty.finished = true;
+  const race = createRace(3, 'hard', 'turbo');
+  assert.equal(race.countdown, 3);
+  assert.equal(race.time, 0);
+  assert.equal(race.finished, false);
+  assert.equal(race.hazards.length, 0);
+  assert.equal(race.projectiles.length, 0);
+  assert.equal(race.announcedLap, 0);
+  assert.equal(race.results.length, 0);
+  assert.ok(race.racers.every(r => r.speed === 0 && r.boost === 0 && r.item === null && r.finishTime === null));
+  assert.equal(race.difficulty, 'hard');
+  assert.equal(race.motorClass, 'turbo');
+  assert.equal(race.racers[0].id, 3);
+});
+
+test('checkpoint gates ignore a two-sector shortcut past the current gate', () => {
+  const race = isolated();
+  const p = race.racers[0];
+  const sector = TRACK_LENGTH / CHECKPOINTS;
+  sit(p, sector * 3 + 1, 0);
+  const skipped = kartPosition(sector * 5 + 1, 0);
+  p.x = skipped.x;
+  p.z = skipped.z;
+  const proj = projectOnTrack(p.x, p.z, p.progress);
+  authorizeProgress(p, proj.progress);
+  assert.ok(p.progress < sector * 4 + 1, `shortcut advanced progress to ${p.progress}, sector ${sector}`);
+});
+

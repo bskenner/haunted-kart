@@ -169,7 +169,7 @@ export default function HauntedKart() {
             <TouchControls touchRef={touchRef} onItem={() => useItem(raceRef.current)} />
           </>
         )}
-        {phase === 'results' && <ResultsScreen results={results} motorClass={raceRef.current.motorClass} playerId={selectedId} onAgain={() => startRace(selectedId)} onChange={() => setPhase('select')} onMenu={toMenu} />}
+        {phase === 'results' && <ResultsScreen results={results} motorClass={raceRef.current.motorClass} playerId={selectedId} onAgain={() => startRace(selectedId)} onChange={() => { newRace(selectedId); setPhase('select'); }} onMenu={toMenu} />}
         {paused && phase === 'race' && <PauseOverlay onResume={() => setPause(false)} onRestart={() => startRace(selectedId)} onMenu={toMenu} />}
         {help && <Instructions onClose={closeHelp} />}
       </div>

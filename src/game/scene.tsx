@@ -266,7 +266,7 @@ function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd }: Omit
       audio.sync(race, false);
       if (race.finished && notified.current !== race) { notified.current = race; onFinish(); }
     } else {
-      updateRace(race, dt, DEMO);
+      updateRace(race, dt, DEMO, false);
       if (phase !== 'results' && (race.finished || race.time > 200)) onDemoEnd();
     }
   });
