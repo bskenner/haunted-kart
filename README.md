@@ -27,7 +27,7 @@ Os outros cinco monstros correm contra você, controlados pelo jogo. Ao escolher
 
 ## Como jogar
 
-Corrida de **3 voltas** no Cemitério da Colina Torta: uma única reta longa de largada/chegada para acelerar, e o restante do circuito em curvas (grampos, esses, varreduras e uma curva fechada de volta à reta). Há minimapa, aviso de contramão e redução de velocidade fora da pista. Nas curvas, dê um pulo e derrape; solte para ganhar um miniturbo (faíscas **azuis** e, se segurar mais, **laranjas**). Há também rampas de impulso, vácuo atrás de outro kart, batidas entre karts e uma roleta curta antes do item ficar pronto.
+Corrida de **3 voltas** no Cemitério da Colina Torta: uma única reta longa de largada/chegada para acelerar, e o restante do circuito em curvas (grampos, esses, varreduras e uma curva fechada de volta à reta). Há minimapa, aviso de contramão e redução de velocidade fora da pista. Nas curvas, dê um pulo e derrape; solte para ganhar um miniturbo (faíscas **azuis** e, se segurar mais, **laranjas**). Há também faixas de impulso (as setas de aceleração ficam só na reta de largada e chegada), vácuo atrás de outro kart, batidas entre karts e uma roleta curta antes do item ficar pronto.
 
 ### Largada especial
 
@@ -78,6 +78,7 @@ Depois de um impacto, o kart fica invulnerável por um instante.
 Toda a trilha e os efeitos são originais, gerados no navegador (Web Audio API). Não há músicas com direitos autorais.
 
 - Música de fundo no menu e uma faixa mais intensa na corrida
+- Som de motor com troca de marchas: ronco baixo devagar, grunhido no médio e chiado mais agudo em alta velocidade
 - Motor que muda com a velocidade, derrapagem, turbo, coleta e uso de itens, impactos, apitos da largada, volta concluída, jingle da última volta e fanfarra de chegada
 - Som de assinatura ao selecionar cada monstro
 - Controles de **Música** e **Efeitos sonoros**, além de silenciar, na tela inicial e na pausa
