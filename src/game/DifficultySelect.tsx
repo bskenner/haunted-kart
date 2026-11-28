@@ -7,7 +7,7 @@ export interface DifficultyProps {
 }
 export function DifficultySelect({ difficulty, onDifficulty, motorClass, onMotorClass }: DifficultyProps) {
   return (
-    <div className="w-full max-w-xs space-y-2">
+    <div className="menu-settings w-full max-w-xs space-y-2">
     <label className="flex items-center justify-between gap-4 w-full max-w-xs text-purple-100 text-sm">
       <span>Dificuldade</span>
       <select aria-label="Dificuldade" data-testid="select-difficulty" value={difficulty} onChange={e => onDifficulty(e.target.value as Difficulty)}
