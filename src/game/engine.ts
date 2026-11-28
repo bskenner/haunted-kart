@@ -1,4 +1,4 @@
-import { arcadeRacer, BOOST_PADS, bumpRacers, crossedMarker, DIFFICULTIES, updateDraft, type ArcadeRacer, type Difficulty } from './arcade.ts';
+import { arcadeRacer, BOOST_PADS, bumpRacers, crossedMarker, DIFFICULTIES, KART_COLLISION_RADIUS, updateDraft, type ArcadeRacer, type Difficulty } from './arcade.ts';
 import { MOTOR_CLASSES, type MotorClass } from './motors.ts';
 /** Browser-only race simulation. Distances are measured along the closed circuit. */
 export const CHARACTERS = [
@@ -18,6 +18,7 @@ export const ITEMS = [
   { id: 'slime', name: 'Poção escorregadia', symbol: 'poção', color: '#9be255' },
 ] as const;
 
+const TAU = Math.PI * 2;
 const wrap = (x: number, m = 1) => ((x % m) + m) % m;
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
@@ -68,150 +69,135 @@ export function trackPoint(t: number) {
     if (arc[mid] <= distance) lo = mid;
     else hi = mid;
   }
-  const span = arc[lo + 1] - arc[lo];
-  const u = (lo + (span > 0 ? (distance - arc[lo]) / span : 0)) / SAMPLES;
+  const u = (lo + (distance - arc[lo]) / (arc[lo + 1] - arc[lo])) / SAMPLES;
   const p = rawPoint(u);
   const ahead = rawPoint(u + 0.0001);
   const behind = rawPoint(u - 0.0001);
   return { ...p, angle: Math.atan2(ahead.x - behind.x, ahead.z - behind.z) };
 }
-
-
-/** World position of a kart on the track, matching the in-game placement. */
-export function kartPosition(progress: number, lane: number) {
-  const p = trackPoint(progress / TRACK_LENGTH);
-  return { x: p.x + Math.cos(p.angle) * lane, y: p.y, z: p.z - Math.sin(p.angle) * lane, angle: p.angle };
-}
-
-/**
- * Camera-space X of a kart, using the same Three.js chase-camera lookAt as the game
- * (camera behind the kart, looking forward). Positive is the right side of the screen.
- * The optional cameraLane pins the camera to a reference lane so a steer can be judged
- * against the view the player actually had.
- */
-export function chaseCameraScreenX(progress: number, lane: number, cameraLane = 0) {
-  const origin = kartPosition(progress, cameraLane);
-  const kart = kartPosition(progress, lane);
-  const fx = Math.sin(origin.angle), fz = Math.cos(origin.angle);
-  const eye = { x: origin.x - fx * 8.5, y: origin.y + 4.2, z: origin.z - fz * 8.5 };
-  const target = { x: origin.x + fx * 6, y: origin.y + 1.2, z: origin.z + fz * 6 };
-  const zx = eye.x - target.x, zy = eye.y - target.y, zz = eye.z - target.z;
-  const zlen = Math.hypot(zx, zy, zz) || 1;
-  const z = { x: zx / zlen, y: zy / zlen, z: zz / zlen };
-  // Three.js lookAt: camera X = normalize(up × z), up = (0, 1, 0).
-  let xx = z.z, xy = 0, xz = -z.x;
-  const xlen = Math.hypot(xx, xy, xz) || 1;
-  xx /= xlen; xy /= xlen; xz /= xlen;
-  return (kart.x - eye.x) * xx + (kart.y - eye.y) * xy + (kart.z - eye.z) * xz;
-}
-
-
-export const CHECKPOINTS = 16;
-
-const TRACK_SAMPLES = Array.from({ length: SAMPLES }, (_, i) => {
-  const p = trackPoint(i / SAMPLES);
-  return { x: p.x, y: p.y, z: p.z, angle: p.angle, progress: (i / SAMPLES) * TRACK_LENGTH };
+export const CHECKPOINT_COUNT = 16;
+const trackSegments = Array.from({ length: SAMPLES }, (_, i) => {
+  const from = rawPoint(i / SAMPLES), to = rawPoint((i + 1) / SAMPLES);
+  return {
+    from, to, start: arc[i], length: arc[i + 1] - arc[i],
+    dx: to.x - from.x, dz: to.z - from.z,
+    lengthSq: (to.x - from.x) ** 2 + (to.z - from.z) ** 2,
+  };
 });
-/** Nearest centerline sample to a free world position, with signed lane offset.
- *  When a reference progress is given, the search stays on the local stretch of
- *  track so the tight south hook cannot snap to the opposite fold. */
-export function projectOnTrack(x: number, z: number, referenceProgress?: number) {
-  let progress: number;
-  if (referenceProgress === undefined) {
-    let bestI = 0;
-    let best = Infinity;
-    for (let i = 0; i < SAMPLES; i++) {
-      const sample = TRACK_SAMPLES[i];
-      const dist2 = (sample.x - x) * (sample.x - x) + (sample.z - z) * (sample.z - z);
-      if (dist2 < best) { best = dist2; bestI = i; }
-    }
-    progress = TRACK_SAMPLES[bestI].progress;
-  } else {
-    progress = wrap(referenceProgress, TRACK_LENGTH);
+export function projectToTrack(x: number, z: number, referenceProgress?: number) {
+  if (referenceProgress !== undefined && Number.isFinite(referenceProgress)) {
+    const reference = wrap(referenceProgress, TRACK_LENGTH);
+    const anchor = trackPoint(reference / TRACK_LENGTH);
+    const tangentX = Math.sin(anchor.angle), tangentZ = Math.cos(anchor.angle);
+    const alongTangent = (x - anchor.x) * tangentX + (z - anchor.z) * tangentZ;
+    const tangentStep = Math.abs(alongTangent) < 1e-6 ? 0 : clamp(alongTangent, -3, 3);
+    const progress = wrap(reference + tangentStep, TRACK_LENGTH);
+    const point = trackPoint(progress / TRACK_LENGTH);
+    const ahead = trackPoint((progress + 2) / TRACK_LENGTH);
+    const dx = x - point.x, dz = z - point.z;
+    return {
+      progress,
+      lane: dx * Math.cos(point.angle) - dz * Math.sin(point.angle),
+      x: point.x, y: point.y, z: point.z, angle: point.angle,
+      pitch: -Math.atan2(ahead.y - point.y, 2),
+    };
   }
-  // One tangent step from the known progress. Iterating toward the Euclidean
-  // nearest point would climb the inside of the tight south hook and snap
-  // several units ahead in a single frame.
-  const cap = referenceProgress === undefined ? 0.5 : 1.0;
-  const p0 = trackPoint(progress / TRACK_LENGTH);
-  const along = clamp((x - p0.x) * Math.sin(p0.angle) + (z - p0.z) * Math.cos(p0.angle), -cap, cap);
-  progress = wrap(progress + along, TRACK_LENGTH);
-  const p = trackPoint(progress / TRACK_LENGTH);
-  const lane = (x - p.x) * Math.cos(p.angle) - (z - p.z) * Math.sin(p.angle);
-  return { progress, lane, angle: p.angle, y: p.y, dist: Math.hypot(p.x - x, p.z - z) };
-}
-
-/** Place a racer on the rail pose. Used for the grid, AI, and test teleports. */
-export function placeRacer(racer: Racer, progress = racer.progress, lane = racer.lane) {
-  racer.progress = progress;
-  racer.lane = lane;
-  const p = kartPosition(progress, lane);
-  racer.x = p.x;
-  racer.y = p.y;
-  racer.z = p.z;
-  racer.heading = p.angle;
-  return racer;
-}
-
-function unwrapNear(current: number, onLap: number) {
-  const lap = Math.floor(current / TRACK_LENGTH);
-  let best = (lap - 1) * TRACK_LENGTH + onLap;
-  for (const extra of [0, 1]) {
-    const cand = (lap + extra) * TRACK_LENGTH + onLap;
-    if (Math.abs(cand - current) < Math.abs(best - current)) best = cand;
+  let bestDistanceSq = Infinity;
+  let best = { progress: 0, lane: 0, x: 0, y: 0, z: 0, angle: 0, pitch: 0 };
+  for (const segment of trackSegments) {
+    const t = clamp(((x - segment.from.x) * segment.dx + (z - segment.from.z) * segment.dz) / segment.lengthSq, 0, 1);
+    const progress = segment.start + segment.length * t;
+    const px = segment.from.x + segment.dx * t;
+    const pz = segment.from.z + segment.dz * t;
+    const ox = x - px, oz = z - pz;
+    const distanceSq = ox * ox + oz * oz;
+    if (distanceSq >= bestDistanceSq) continue;
+    const angle = Math.atan2(segment.dx, segment.dz);
+    const horizontalLength = Math.hypot(segment.dx, segment.dz);
+    bestDistanceSq = distanceSq;
+    best = {
+      progress,
+      lane: ox * Math.cos(angle) - oz * Math.sin(angle),
+      x: px, y: segment.from.y + (segment.to.y - segment.from.y) * t, z: pz, angle,
+      pitch: -Math.atan2(segment.to.y - segment.from.y, horizontalLength),
+    };
   }
   return best;
 }
-
-/** Follow the nearest point only inside the current checkpoint sector; skip ahead is ignored. */
-export function authorizeProgress(racer: Racer, nearestOnLap: number) {
-  const sector = TRACK_LENGTH / CHECKPOINTS;
-  const current = racer.progress;
-  const projected = unwrapNear(current, nearestOnLap);
-  const start = Math.floor(current / sector) * sector;
-  const end = start + sector;
-  if (projected >= start - sector * 0.25 && projected <= end + 0.05) {
-    racer.progress = clamp(projected, start - sector * 0.2, end);
-  }
-  if (projected > end) {
-    const gate = kartPosition(end, 0);
-    if (Math.hypot(racer.x - gate.x, racer.z - gate.z) < 12) {
-      racer.progress = clamp(projected, start, end + sector);
+function railPose(progress: number, lane: number) {
+  const p = trackPoint(progress / TRACK_LENGTH);
+  const ahead = trackPoint(progress / TRACK_LENGTH + 2 / TRACK_LENGTH);
+  return {
+    x: p.x + Math.cos(p.angle) * lane, y: p.y,
+    z: p.z - Math.sin(p.angle) * lane,
+    heading: p.angle, trackAngle: p.angle,
+    trackPitch: -Math.atan2(ahead.y - p.y, 2),
+  };
+}
+function syncRailPose(racer: Racer, afterBump = false) {
+  if (afterBump) {
+    const reference = wrap(racer.progress, TRACK_LENGTH);
+    const projection = projectToTrack(racer.x, racer.z, reference);
+    if (racer.finishTime === null) {
+      let progressDelta = projection.progress - reference;
+      if (progressDelta > TRACK_LENGTH / 2) progressDelta -= TRACK_LENGTH;
+      else if (progressDelta < -TRACK_LENGTH / 2) progressDelta += TRACK_LENGTH;
+      // A kart bump may nudge the rail pose, but it must not skip or undo a
+      // meaningful amount of race progress in one simulation step.
+      racer.progress += clamp(progressDelta, -0.15, 0.15);
     }
+    racer.lane = clamp(projection.lane, -3.8, 3.8);
   }
+  Object.assign(racer, railPose(racer.progress, racer.lane));
+  racer.rawProgress = wrap(racer.progress, TRACK_LENGTH);
 }
-
-function constrainPlayerToWalls(racer: Racer) {
-  const proj = projectOnTrack(racer.x, racer.z, racer.progress);
-  if (Math.abs(proj.lane) < WALL_EDGE) return false;
-  const side = Math.sign(proj.lane) || 1;
-  const nx = Math.cos(proj.angle) * side;
-  const nz = -Math.sin(proj.angle) * side;
-  const excess = Math.abs(proj.lane) - (WALL_EDGE - 0.06);
-  racer.x -= nx * excess;
-  racer.z -= nz * excess;
-  const vx = Math.sin(racer.heading) * racer.speed;
-  const vz = Math.cos(racer.heading) * racer.speed;
-  const vn = vx * nx + vz * nz;
-  if (vn > 0) {
-    const rx = vx - 2 * vn * nx;
-    const rz = vz - 2 * vn * nz;
-    const mag = Math.hypot(rx, rz);
-    racer.speed = mag * Math.sign(racer.speed || 1);
-    if (mag > 0.15) racer.heading = Math.atan2(rx, rz);
-    racer.lateralSpeed = -side * Math.max(1.8, Math.abs(racer.lateralSpeed) * 0.45);
+function crossedCheckpoint(beforeX: number, beforeZ: number, afterX: number, afterZ: number, gateProgress: number) {
+  const gate = trackPoint(gateProgress / TRACK_LENGTH);
+  const tx = Math.sin(gate.angle), tz = Math.cos(gate.angle);
+  const before = (beforeX - gate.x) * tx + (beforeZ - gate.z) * tz;
+  const after = (afterX - gate.x) * tx + (afterZ - gate.z) * tz;
+  if (before > 0 || after <= 0 || after === before) return false;
+  const ratio = -before / (after - before);
+  const x = beforeX + (afterX - beforeX) * ratio;
+  const z = beforeZ + (afterZ - beforeZ) * ratio;
+  const laneAtGate = (x - gate.x) * Math.cos(gate.angle) - (z - gate.z) * Math.sin(gate.angle);
+  return Math.abs(laneAtGate) <= ROAD_EDGE;
+}
+function updatePlayerTrackState(
+  racer: Racer,
+  beforeX: number,
+  beforeZ: number,
+  projection = projectToTrack(racer.x, racer.z, racer.rawProgress),
+) {
+  racer.rawProgress = projection.progress;
+  racer.lane = projection.lane;
+  racer.y = projection.y;
+  racer.trackAngle = projection.angle;
+  racer.trackPitch = projection.pitch;
+  const nextGate = (racer.checkpointIndex + 1) * TRACK_LENGTH / CHECKPOINT_COUNT;
+  if (crossedCheckpoint(beforeX, beforeZ, racer.x, racer.z, nextGate)) {
+    if (racer.checkpointIndex === CHECKPOINT_COUNT - 1) {
+      racer.completedLaps = Math.min(3, racer.completedLaps + 1);
+      racer.checkpointIndex = 0;
+    } else racer.checkpointIndex++;
   }
-  return true;
+  const sectorStart = racer.checkpointIndex * TRACK_LENGTH / CHECKPOINT_COUNT;
+  const sectorEnd = (racer.checkpointIndex + 1) * TRACK_LENGTH / CHECKPOINT_COUNT;
+  if (projection.progress >= sectorStart && projection.progress <= sectorEnd)
+    racer.progress = racer.completedLaps * TRACK_LENGTH + projection.progress;
+  else racer.progress = clamp(racer.progress, racer.completedLaps * TRACK_LENGTH + sectorStart, racer.completedLaps * TRACK_LENGTH + sectorEnd);
 }
+function wrapAngle(angle: number) { return ((angle + Math.PI) % TAU + TAU) % TAU - Math.PI; }
 
 export interface Input {
   accelerate: boolean; brake: boolean; left: boolean; right: boolean; drift: boolean; item: boolean;
 }
 export interface Racer extends ArcadeRacer {
   id: number; progress: number; lane: number; speed: number; boost: number; shield: number;
+  x: number; y: number; z: number; heading: number; rawProgress: number;
+  trackAngle: number; trackPitch: number; checkpointIndex: number; completedLaps: number;
   spin: number; slow: number; driftCharge: number; drifting: boolean; item: string | null;
   finishTime: number | null;
-  x: number; y: number; z: number; heading: number;
   lateralSpeed: number; steering: number; boostPower: number; offroad: boolean;
   wallCooldown: number; reverseHold: number; wrongWay: number; stumble: number;
   pickupFlash: number; useFlash: number; hitFlash: number;
@@ -221,7 +207,9 @@ export interface RaceEvent { seq: number; type: EventKind; value?: number; item?
 export const DRIFT_BLUE = 0.55;
 export const DRIFT_ORANGE = 1.5;
 export const ROAD_EDGE = 6.6;
-export const WALL_EDGE = 7.8;
+// The visible rail is centered at lateral 9m and is 6cm thick. Keep a small
+// safety gap after the complete kart bounding radius so its body cannot clip it.
+export const WALL_EDGE = 9 - 0.06 - KART_COLLISION_RADIUS - 0.02;
 export const driftTier = (charge: number) => charge >= DRIFT_ORANGE ? 2 : charge >= DRIFT_BLUE ? 1 : 0;
 export interface RaceResult { id: number; time: number; position: number; estimated: boolean }
 export interface ItemBox { t: number; lane: number; cooldown: number }
@@ -233,13 +221,13 @@ export interface RaceState {
   /** Internal state belongs to each race, so restarting resets every cooldown. */
   aiTimers: number[]; itemHeld: boolean;
   events: RaceEvent[]; eventSeq: number; throttleHeld: boolean; launchAt: number | null;
+  announcedLap: number;
   difficulty: Difficulty;
   motorClass: MotorClass;
-  announcedLap: number;
 }
 function emit(race: RaceState, type: EventKind, value?: number, item?: string) {
   race.events.push({ seq: ++race.eventSeq, type, value, item });
-  if (race.events.length > 48) race.events.shift();
+  if (race.events.length > 256) race.events.shift();
 }
 function boost(race: RaceState, racer: Racer, duration: number, power: number, tier = 0) {
   racer.boost = Math.max(racer.boost, duration);
@@ -248,23 +236,26 @@ function boost(race: RaceState, racer: Racer, duration: number, power: number, t
 }
 export function createRace(characterId: number, difficulty: Difficulty = 'normal', motorClass: MotorClass = 'normal'): RaceState {
   const ids = [characterId, ...CHARACTERS.filter(c => c.id !== characterId).map(c => c.id)];
-  const race: RaceState = {
-    racers: ids.map((id, i) => ({
-      ...arcadeRacer(),
-      id, progress: i < 2 ? 0 : -Math.floor(i / 2) * 3.5, lane: i % 2 === 0 ? -1.6 : 1.6,
-      speed: 0, boost: 0, shield: 0, spin: 0, slow: 0, driftCharge: 0, drifting: false,
-      item: null, finishTime: null,
-      x: 0, y: 0, z: 0, heading: 0,
-      lateralSpeed: 0, steering: 0, boostPower: 1, offroad: false, wallCooldown: 0,
-      reverseHold: 0, wrongWay: 0, stumble: 0, pickupFlash: 0, useFlash: 0, hitFlash: 0,
-    })),
+  return {
+    racers: ids.map((id, i) => {
+      const progress = i < 2 ? 0 : -Math.floor(i / 2) * 3.5;
+      const lane = i % 2 === 0 ? -1.6 : 1.6;
+      return {
+        ...arcadeRacer(), ...railPose(progress, lane),
+        id, progress, lane, rawProgress: wrap(progress, TRACK_LENGTH),
+        checkpointIndex: 0, completedLaps: 0,
+        speed: 0, boost: 0, shield: 0, spin: 0, slow: 0, driftCharge: 0, drifting: false,
+        item: null, finishTime: null,
+        lateralSpeed: 0, steering: 0, boostPower: 1, offroad: false, wallCooldown: 0,
+        reverseHold: 0, wrongWay: 0, stumble: 0, pickupFlash: 0, useFlash: 0, hitFlash: 0,
+      };
+    }),
     time: 0, countdown: 3, finished: false, results: [], hazards: [], projectiles: [], difficulty, motorClass,
     boxes: [0.34, 0.50, 0.68, 0.84].flatMap(t => [-4, 0, 4].map(lane => ({ t, lane, cooldown: 0 }))),
     message: '', messageTime: 0, aiTimers: ids.map((_, i) => 7 + i * 1.8), itemHeld: false,
-    events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null, announcedLap: 0,
+    events: [{ seq: 1, type: 'countdown', value: 3 }], eventSeq: 1, throttleHeld: false, launchAt: null,
+    announcedLap: 0,
   };
-  race.racers.forEach(r => placeRacer(r));
-  return race;
 }
 function announce(race: RaceState, message: string) {
   race.message = message;
@@ -325,7 +316,7 @@ export function updateRace(race: RaceState, delta: number, input: Input, manualP
     remaining -= dt;
   }
 }
-function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true) {
+function stepRace(race: RaceState, dt: number, input: Input, manualPlayer: boolean) {
   if (race.finished) return;
   if (race.countdown > 0) {
     if (input.accelerate && !race.throttleHeld) race.launchAt = race.countdown;
@@ -340,7 +331,7 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
         announce(race, 'Largada monstruosa! Turbo!');
         emit(race, 'launch');
       }
-      // Early or late throttle simply misses the turbo; the kart still accelerates on green.
+      // A press outside the launch window only misses the bonus; throttle still works on green.
     }
     return;
   }
@@ -377,13 +368,15 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
     const p = trackPoint(t);
     const ahead = trackPoint(t + 0.014);
     const curve = Math.atan2(Math.sin(ahead.angle - p.angle), Math.cos(ahead.angle - p.angle));
+    const isManualPlayer = index === 0 && manualPlayer;
+    const beforeX = racer.x, beforeZ = racer.z;
     let maxSpeed = (22 + stats.speed * 0.95) * motor.speed;
-    const isPlayer = index === 0 && manualPlayer;
-    let throttle = isPlayer ? input.accelerate : true;
-    const braking = isPlayer && input.brake;
-    const steering = isPlayer ? Number(input.left) - Number(input.right) : 0;
-    const canDrift = isPlayer && input.drift && racer.speed > 8 && racer.spin === 0 && !braking;
-    if (isPlayer) {
+    if (isManualPlayer && racer.offroad) maxSpeed *= 0.53;
+    let throttle = isManualPlayer ? input.accelerate : true;
+    const braking = isManualPlayer && input.brake;
+    const steering = isManualPlayer ? Number(input.left) - Number(input.right) : 0;
+    const canDrift = isManualPlayer && input.drift && racer.speed > 8 && racer.spin === 0 && !racer.offroad && !braking;
+    if (isManualPlayer) {
       if (input.drift && !racer.driftHeld && racer.speed > 2 && racer.spin === 0) {
         racer.hop = 0.3; emit(race, 'hop');
       }
@@ -394,7 +387,7 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
       racer.driftHeld = input.drift;
     }
     const drifting = canDrift && racer.driftDirection !== 0;
-    if (!isPlayer) {
+    if (index > 0 || !manualPlayer) {
       // Bounded +/- adjustments around the middle of the field, not teleports
       // or a hidden speed penalty targeting only the human player.
       const catchup = clamp((pack - racer.progress) / 150, -difficulty.aheadSlack, difficulty.catchup);
@@ -403,7 +396,7 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
       // Look ahead, take the inside gently and leave room to overtake.
       const distant = trackPoint(t + 0.045 * difficulty.racingLine * motor.speed);
       const bend = Math.atan2(Math.sin(distant.angle - p.angle), Math.cos(distant.angle - p.angle));
-      let targetLane = Math.sin(index * 2.3) * 0.85 - clamp(bend * 4.5 * difficulty.racingLine, -2.2, 2.2);
+      let targetLane = Math.sin(index * 2.3) * 0.85 + clamp(bend * 4.5 * difficulty.racingLine, -2.2, 2.2);
       const itemLookAhead = 26 * motor.speed;
       let nearest = itemLookAhead;
       if (!racer.item) for (const box of race.boxes) {
@@ -441,22 +434,8 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
         race.aiTimers[index] = (2.2 + Math.random() * 2.8) * difficulty.aggression;
       }
     } else {
-      // Fully manual: heading changes only from the player's steer/drift input.
-      // No rail, auto-alignment, auto-centering, or magnet back to the track.
-      const steerRate = 1 - Math.exp(-dt / (steering ? 0.1 : 0.04) * motor.grip);
-      racer.steering += (steering - racer.steering) * steerRate;
-      if (racer.spin === 0) {
-        const speedScale = Math.min(1, Math.abs(racer.speed) / 7);
-        const turn = (0.85 + stats.handling * 0.06) * motor.steering * speedScale;
-        if (drifting) {
-          const arc = steering === racer.driftDirection ? 1.25 : steering ? 0.45 : 0.9;
-          racer.heading += racer.driftDirection * turn * arc * dt;
-        } else if (steering) {
-          racer.heading += steering * turn * dt;
-        }
-      }
-      racer.offroad = Math.abs(racer.lane) > ROAD_EDGE;
-      if (racer.offroad) maxSpeed *= 0.53;
+      // Manual player steering changes heading only from explicit input or a held drift.
+      racer.steering = steering;
       const oldTier = driftTier(racer.driftCharge);
       if (drifting) racer.driftCharge = Math.min(3, racer.driftCharge + dt);
       if (driftTier(racer.driftCharge) > oldTier) emit(race, 'tier', driftTier(racer.driftCharge));
@@ -496,26 +475,65 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
         racer.speed = Math.sign(racer.speed) * Math.max(0, Math.abs(racer.speed) - drag);
       }
     }
-    if (isPlayer) {
-      racer.x += Math.sin(racer.heading) * racer.speed * dt;
-      racer.z += Math.cos(racer.heading) * racer.speed * dt;
-      if (constrainPlayerToWalls(racer) && racer.wallCooldown === 0) {
-        racer.speed *= 0.88;
-        racer.wallCooldown = 0.55;
-        emit(race, 'wall');
+    if (isManualPlayer) {
+      const speedAuthority = clamp(Math.abs(racer.speed) / 8, 0, 1);
+      let turn = steering;
+      if (drifting) {
+        const arc = steering === racer.driftDirection ? 1.3 : steering === -racer.driftDirection ? 0.22 : 0.68;
+        turn = racer.driftDirection * arc;
       }
-      const proj = projectOnTrack(racer.x, racer.z, racer.progress);
-      racer.y = proj.y;
-      racer.lane = proj.lane;
-      racer.offroad = Math.abs(proj.lane) > ROAD_EDGE;
-      authorizeProgress(racer, proj.progress);
-      const moveDot = racer.speed * (Math.sin(racer.heading) * Math.sin(proj.angle) + Math.cos(racer.heading) * Math.cos(proj.angle));
-      racer.wrongWay = moveDot < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
+      if (racer.spin > 0) turn = 0;
+      if (turn !== 0 && speedAuthority > 0) {
+        const turnRate = drifting ? 0.72 + stats.handling * 0.02 : 1.15 + stats.handling * 0.04;
+        const speedStability = 1 - 0.28 * clamp((Math.abs(racer.speed) - 18) / 26, 0, 1);
+        racer.heading = wrapAngle(racer.heading + turn * turnRate
+          * speedStability * motor.steering * speedAuthority * dt);
+      }
+      // Sweep the kart's center in short world-space steps. Projection is
+      // always referenced to the last local point, so a hairpin can't snap to
+      // a later part of the circuit and fast motion can't pass through a rail.
+      let projection = projectToTrack(racer.x, racer.z, racer.rawProgress);
+      let projectionReference = projection.progress;
+      const movementSteps = Math.max(1, Math.ceil(Math.abs(racer.speed * dt) / 0.25));
+      const movementDt = dt / movementSteps;
+      let wallHitThisStep = false;
+      for (let move = 0; move < movementSteps; move++) {
+        racer.x += Math.sin(racer.heading) * racer.speed * movementDt;
+        racer.z += Math.cos(racer.heading) * racer.speed * movementDt;
+        projection = projectToTrack(racer.x, racer.z, projectionReference);
+        projectionReference = projection.progress;
+        for (let resolve = 0; resolve < 3 && Math.abs(projection.lane) > WALL_EDGE; resolve++) {
+          const side = Math.sign(projection.lane);
+          const correction = projection.lane - side * WALL_EDGE;
+          racer.x -= Math.cos(projection.angle) * correction;
+          racer.z += Math.sin(projection.angle) * correction;
+          projection = projectToTrack(racer.x, racer.z, projectionReference);
+          projectionReference = projection.progress;
+          if (racer.wallCooldown === 0 && !wallHitThisStep) {
+            racer.speed *= 0.72;
+            racer.wallCooldown = 0.55;
+            wallHitThisStep = true;
+            emit(race, 'wall');
+          }
+        }
+      }
+      updatePlayerTrackState(racer, beforeX, beforeZ, projection);
+      racer.offroad = Math.abs(racer.lane) > ROAD_EDGE;
+      racer.lateralSpeed = ((racer.x - beforeX) * Math.cos(racer.trackAngle)
+        - (racer.z - beforeZ) * Math.sin(racer.trackAngle)) / dt;
+      if (racer.offroad && racer.speed > 0) {
+        const offroadLimit = (22 + stats.speed * 0.95) * motor.speed * 0.53;
+        if (racer.speed > offroadLimit) racer.speed = Math.max(offroadLimit, racer.speed - 24 * dt);
+      }
+      racer.wrongWay = racer.speed * Math.cos(racer.heading - racer.trackAngle) < -1
+        ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
     } else {
-      racer.wrongWay = racer.speed < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
       racer.progress += racer.speed * dt;
-      placeRacer(racer);
+      syncRailPose(racer);
+      racer.offroad = Math.abs(racer.lane) > ROAD_EDGE;
+      racer.wrongWay = racer.speed < -1 ? Math.min(2, racer.wrongWay + dt) : Math.max(0, racer.wrongWay - dt * 3);
     }
+    const currentTrackT = racer.progress / TRACK_LENGTH;
     if (racer.speed > 5 && racer.padCooldown === 0 && BOOST_PADS.some(pad =>
       Math.abs(racer.lane - pad.lane) < 1.65 && crossedMarker(prevProgress, racer.progress, pad.t, TRACK_LENGTH, 2))) {
       racer.padCooldown = 1.3;
@@ -537,7 +555,7 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
       }
     }
     for (const hazard of race.hazards) {
-      if (hazard.life > 0 && hazard.owner !== index && circularDistance(t, hazard.t) < 2 && Math.abs(racer.lane - hazard.lane) < 1.8) {
+      if (hazard.life > 0 && hazard.owner !== index && circularDistance(currentTrackT, hazard.t) < 2 && Math.abs(racer.lane - hazard.lane) < 1.8) {
         hit(race, racer, true);
         hazard.life = 0;
       }
@@ -548,25 +566,23 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
       if (index === 0) emit(race, 'finish');
     } else if (index === 0) {
       const lap = Math.floor(racer.progress / TRACK_LENGTH);
-      if (lap > Math.floor(prevProgress / TRACK_LENGTH) && lap > race.announcedLap) {
+      if (lap > race.announcedLap && lap > 0) {
         race.announcedLap = lap;
         emit(race, lap === 2 ? 'finalLap' : 'lap', lap + 1);
         announce(race, lap === 2 ? 'Última volta! Assombre a concorrência!' : 'Volta 2! A corrida continua!');
       }
     }
   });
-  if (bumpRacers(race, TRACK_LENGTH)) emit(race, 'bump');
-  race.racers.forEach((racer, index) => {
-    if (racer.finishTime !== null) return;
-    const proj = projectOnTrack(racer.x, racer.z, racer.progress);
-    if (index === 0 && manualPlayer) {
-      racer.lane = proj.lane;
-      racer.y = proj.y;
-    } else {
-      racer.lane = clamp(proj.lane, -6.08, 6.08);
-      placeRacer(racer);
-    }
+  const bumps = bumpRacers(race, TRACK_LENGTH);
+  if (bumps.impact) emit(race, 'bump');
+  bumps.touched.forEach(racer => {
+    if (racer !== race.racers[0] || !manualPlayer) syncRailPose(racer, true);
   });
+  if (manualPlayer && race.racers[0].finishTime === null) {
+    const player = race.racers[0];
+    const beforeX = player.x, beforeZ = player.z;
+    updatePlayerTrackState(player, beforeX, beforeZ);
+  }
   for (const projectile of race.projectiles) {
     projectile.life -= dt;
     projectile.t = wrap(projectile.t + 57 * motor.speed * dt / TRACK_LENGTH);

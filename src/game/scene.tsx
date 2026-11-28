@@ -37,7 +37,7 @@ interface SceneProps {
   onDemoEnd: () => void;
 }
 
-function RacerMesh({ index, raceRef }: { index: number; raceRef: MutableRefObject<RaceState> }) {
+function RacerMesh({ index, raceRef, manualPlayer }: { index: number; raceRef: MutableRefObject<RaceState>; manualPlayer: boolean }) {
   const outer = useRef<THREE.Group>(null);
   const inner = useRef<THREE.Group>(null);
   const flame = useRef<THREE.Mesh>(null);
@@ -49,16 +49,20 @@ function RacerMesh({ index, raceRef }: { index: number; raceRef: MutableRefObjec
   useFrame(({ clock }, dt) => {
     const r = raceRef.current.racers[index];
     if (!r || !outer.current || !inner.current) return;
-    outer.current.position.set(r.x, r.y, r.z);
-    const ahead = trackPoint(r.progress / TRACK_LENGTH + 2 / TRACK_LENGTH);
-    const worldPitch = -Math.atan2(ahead.y - r.y, 2);
-    outer.current.rotation.set(worldPitch, r.heading, 0, 'YXZ');
-    const dl = r.steering * 4;
+    const isManualPlayer = index === 0 && manualPlayer;
+    const pose = isManualPlayer
+      ? { angle: r.heading, pitch: r.trackPitch }
+      : place(r.progress, r.lane, outer.current.position);
+    if (isManualPlayer) outer.current.position.set(r.x, r.y, r.z);
+    outer.current.rotation.set(pose.pitch, pose.angle, 0, 'YXZ');
+    const dl = (r.lane - prevLane.current) / Math.max(dt, 0.001);
     prevLane.current = r.lane;
     const t = clock.elapsedTime;
     const follow = 1 - Math.exp(-14 * dt);
-    inner.current.rotation.y = r.spin > 0 ? t * 14 : THREE.MathUtils.lerp(inner.current.rotation.y % (Math.PI * 2), r.drifting ? r.driftDirection * 0.4 + r.steering * 0.07 : r.steering * 0.09, follow);
-    inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, THREE.MathUtils.clamp(dl * 0.025, -0.14, 0.14), follow);
+    inner.current.rotation.y = r.spin > 0 ? t * 14 : isManualPlayer ? 0
+      : THREE.MathUtils.lerp(inner.current.rotation.y % (Math.PI * 2), r.drifting ? r.driftDirection * 0.4 + r.steering * 0.07 : r.steering * 0.09, follow);
+    const lean = isManualPlayer ? -(r.drifting ? r.driftDirection : r.steering) * 0.08 : -dl * 0.025;
+    inner.current.rotation.z = THREE.MathUtils.lerp(inner.current.rotation.z, THREE.MathUtils.clamp(lean, -0.14, 0.14), follow);
     inner.current.position.y = Math.sin(Math.PI * (1 - r.hop / 0.3)) * (r.hop > 0 ? 0.48 : 0)
       + Math.abs(Math.sin(t * 20 + index)) * Math.min(0.05, Math.abs(r.speed) * 0.002);
     inner.current.visible = r.recovery === 0 || Math.floor(t * 14) % 3 !== 0;
@@ -223,7 +227,7 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
     } else {
       // title/results: cinematic orbit around a racer
       const lead = phase === 'results' ? race.racers[0] : race.racers.reduce((a, b) => (b.progress > a.progress ? b : a));
-      _p.set(lead.x, lead.y, lead.z);
+      place(lead.progress, lead.lane, _p);
       const a = t * 0.12;
       const rad = phase === 'results' ? 12 : 15;
       target.set(_p.x + Math.cos(a) * rad, _p.y + 6 + Math.sin(t * 0.2) * 1.5, _p.z + Math.sin(a) * rad);
@@ -244,7 +248,7 @@ function CameraRig({ phase, raceRef }: { phase: Phase; raceRef: MutableRefObject
 
 const DEMO: Input = { accelerate: true, brake: false, left: false, right: false, drift: false, item: false };
 
-function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd }: Omit<SceneProps, 'raceVersion' | 'selectedId'>) {
+function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd, manualPlayer }: Omit<SceneProps, 'raceVersion' | 'selectedId'> & { manualPlayer: boolean }) {
   const [, get] = useKeyboardControls();
   const notified = useRef<RaceState | null>(null);
   useFrame((_, delta) => {
@@ -262,11 +266,11 @@ function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd }: Omit
         drift: !!k.drift || tch.drift,
         item: !!k.item || tch.item,
       };
-      updateRace(race, dt, input);
-      audio.sync(race, false);
+       updateRace(race, dt, input, manualPlayer);
+       audio.sync(race, false, input);
       if (race.finished && notified.current !== race) { notified.current = race; onFinish(); }
     } else {
-      updateRace(race, dt, DEMO, false);
+       updateRace(race, dt, DEMO, manualPlayer);
       if (phase !== 'results' && (race.finished || race.time > 200)) onDemoEnd();
     }
   });
@@ -276,19 +280,20 @@ function Loop({ phase, raceRef, touchRef, pausedRef, onFinish, onDemoEnd }: Omit
 export function Scene(props: SceneProps) {
   const { raceRef, raceVersion } = props;
   const count = raceRef.current.racers.length;
+  const manualPlayer = props.phase === 'race';
   return (
     <>
       <RenderBudget />
       <World />
       <BoostPads />
       <group key={raceVersion}>
-        {Array.from({ length: count }).map((_, i) => <RacerMesh key={i} index={i} raceRef={raceRef} />)}
+        {Array.from({ length: count }).map((_, i) => <RacerMesh key={i} index={i} raceRef={raceRef} manualPlayer={manualPlayer} />)}
         <ItemBoxes raceRef={raceRef} />
       </group>
       <Hazards raceRef={raceRef} />
       {props.phase === 'select' && <Showcase selectedId={props.selectedId} phase={props.phase} />}
       <CameraRig phase={props.phase} raceRef={raceRef} />
-      <Loop phase={props.phase} raceRef={raceRef} touchRef={props.touchRef} pausedRef={props.pausedRef} onFinish={props.onFinish} onDemoEnd={props.onDemoEnd} />
+      <Loop phase={props.phase} raceRef={raceRef} touchRef={props.touchRef} pausedRef={props.pausedRef} onFinish={props.onFinish} onDemoEnd={props.onDemoEnd} manualPlayer={manualPlayer} />
     </>
   );
 }
