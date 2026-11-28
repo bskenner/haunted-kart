@@ -6,8 +6,10 @@ export const DIFFICULTIES = {
   hard: { label: 'Difícil', pace: 1.025, catchup: 0.05, aggression: 0.72 },
 } as const;
 export type Difficulty = keyof typeof DIFFICULTIES;
+// Three arrow strips live only on the long start/finish straight, past the
+// grid and well before the first corner, so they never fire at rocket start.
 export const BOOST_PADS = [
-  { t: 0.40, lane: 2.2 }, { t: 0.565, lane: -2.2 }, { t: 0.70, lane: 2.2 }, { t: 0.93, lane: 0 },
+  { t: 0.07, lane: 0 }, { t: 0.19, lane: 0 },
 ] as const;
 export function loadDifficulty(): Difficulty {
   try { const saved = localStorage.getItem('hk-difficulty'); if (saved === 'easy' || saved === 'hard') return saved; } catch { /* Storage can be disabled. */ }

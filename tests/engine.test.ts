@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { KEY_MAP } from '../src/game/controls.ts';
 import { BOOST_PADS, bumpRacers, DIFFICULTIES, updateDraft } from '../src/game/arcade.ts';
+import { GEAR_COUNT, nextGear, gearRpm, engineTone } from '../src/game/engineSound.ts';
 import { MOTOR_CLASSES } from '../src/game/motors.ts';
 import { CHARACTERS, ITEMS, TRACK_LENGTH, START_STRAIGHT_LENGTH, WALL_EDGE, ROAD_EDGE, CHECKPOINTS, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, authorizeProgress, type Racer, type Input } from '../src/game/engine.ts';
 
@@ -409,6 +410,18 @@ test('slipstream charges only behind an opponent, grants one boost and respects 
   a.draftCharge = 1.1; assert.equal(updateDraft(a, [a, b], TRACK_LENGTH, 1 / 60), false);
   a.lane = 3; updateDraft(a, [a, b], TRACK_LENGTH, 1 / 60); assert.equal(a.draftActive, false);
 });
+test('boost pads sit only on the start straight, clear of the grid and the first corner', () => {
+  assert.ok(BOOST_PADS.length >= 2 && BOOST_PADS.length <= 3);
+  const seen = new Set<number>();
+  for (const pad of BOOST_PADS) {
+    const progress = pad.t * TRACK_LENGTH;
+    assert.ok(progress > 18, `pad at ${progress.toFixed(1)} is too close to the grid or finish line`);
+    assert.ok(progress < START_STRAIGHT_LENGTH - 12, `pad at ${progress.toFixed(1)} is off the start straight`);
+    assert.ok(Math.abs(pad.lane) < 4, 'pads must stay in the middle of the road');
+    seen.add(Math.round(pad.t * 1000));
+  }
+  assert.equal(seen.size, BOOST_PADS.length, 'pads should be spaced along the straight');
+});
 test('boost pads trigger at speed on the painted lane, not adjacent lanes or reverse', () => {
   const pad = BOOST_PADS[0], race = isolated(), p = race.racers[0];
   sit(p, pad.t * TRACK_LENGTH - 1.9, pad.lane); p.speed = 26;
@@ -642,3 +655,22 @@ test('checkpoint gates ignore a two-sector shortcut past the current gate', () =
   assert.ok(p.progress < sector * 4 + 1, `shortcut advanced progress to ${p.progress}, sector ${sector}`);
 });
 
+test('the engine uses four gears and upshifts with a pitch drop', () => {
+  assert.equal(GEAR_COUNT, 4);
+  assert.equal(nextGear(0, 1), 1);
+  assert.equal(nextGear(7, 1), 1);
+  assert.equal(nextGear(10, 1), 2);
+  assert.equal(nextGear(18, 2), 3);
+  assert.equal(nextGear(26, 3), 4);
+  // Hysteresis: just below the upshift point a higher gear still holds.
+  assert.equal(nextGear(8, 2), 2);
+  assert.equal(nextGear(6, 2), 1);
+  const before = engineTone(16.5, 2);
+  const after = engineTone(16.5, 3);
+  assert.ok(after.pitch < before.pitch * 0.85, 'an upshift should drop the pitch');
+  assert.ok(gearRpm(4, 1) < gearRpm(8, 1), 'rpm rises inside a gear');
+  assert.ok(engineTone(20, 3, true).volume > engineTone(20, 3, false).volume);
+  assert.ok(engineTone(20, 3, true).cutoff > engineTone(20, 3, false).cutoff);
+  assert.ok(engineTone(5, 1).cutoff < engineTone(14, 2).cutoff);
+  assert.ok(engineTone(14, 2).cutoff < engineTone(28, 4).cutoff);
+});
