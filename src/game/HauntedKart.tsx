@@ -57,7 +57,9 @@ export default function HauntedKart() {
     }));
   }, []);
   const setPause = useCallback((v: boolean) => {
-    if (v) clearInputs();
+    // Clear on both pause and resume: keys used to navigate a pause menu must
+    // never become held race controls when the overlay closes.
+    clearInputs();
     audio.setPaused(v);
     pausedRef.current = v; setPaused(v);
   }, [clearInputs]);
@@ -73,7 +75,7 @@ export default function HauntedKart() {
       if (canvas) { canvas.tabIndex = 0; canvas.focus({ preventScroll: true }); }
     });
   };
-  const toMenu = () => { setPause(false); newRace(selectedId); setPhase('title'); };
+  const toMenu = useCallback(() => { setPause(false); newRace(selectedId); setPhase('title'); }, [setPause, newRace, selectedId]);
   const onFinish = useCallback(() => { setResults([...raceRef.current.results]); setPhase('results'); }, []);
   const onDemoEnd = useCallback(() => newRace(CHARACTERS[Math.floor(Math.random() * CHARACTERS.length)].id), [newRace]);
   const openHelp = () => {
@@ -96,15 +98,88 @@ export default function HauntedKart() {
     return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
   }, []);
   useEffect(() => {
+    if (phase === 'race' && !paused && !help) return;
+    const frame = requestAnimationFrame(() => {
+      const selector = help ? '[data-menu-surface="help"]' : '[data-menu-surface]';
+      const surface = document.querySelector<HTMLElement>(selector);
+      const active = document.activeElement;
+      if (surface && active instanceof HTMLElement && surface.contains(active)) return;
+      const candidates = surface
+        ? Array.from(surface.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled])'))
+          .filter(el => el.getClientRects().length > 0)
+        : [];
+      const preferred = surface?.querySelector<HTMLElement>('[data-testid="button-resume"]');
+      (preferred ?? candidates[0])?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [phase, paused, help]);
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-      if (phase === 'race' && !pausedRef.current && (e.code === 'Space' || e.code.startsWith('Arrow'))) e.preventDefault();
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const menuOpen = help || phase !== 'race' || pausedRef.current;
+      if (e.code === 'Escape' && !e.repeat) {
+        if (help) closeHelp();
+        else if (phase === 'select') setPhase('title');
+        else if (phase === 'results') toMenu();
+        else if (phase === 'race' && pausedRef.current) setPause(false);
+        else if (phase === 'race') setPause(true);
+        return;
+      }
+      if (e.code === 'KeyP' && !e.repeat && phase === 'race' && !help) {
+        setPause(!pausedRef.current);
+        return;
+      }
+      if (!menuOpen) {
+        if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
+        if (!e.repeat && (e.code === 'Space' || e.code === 'KeyE')) useItem(raceRef.current);
+        return;
+      }
       if (e.repeat) return;
-      // Discrete actions must not disappear when keydown and keyup both happen
-      // between two animation frames on a slower phone.
-      if (phase === 'race' && !pausedRef.current && (e.code === 'Space' || e.code === 'KeyE')) useItem(raceRef.current);
-      if (e.code === 'Escape' && help) closeHelp();
-      else if ((e.code === 'Escape' || e.code === 'KeyP') && phase === 'race' && !help) setPause(!pausedRef.current);
+
+      if (e.code.startsWith('Arrow')) {
+        if (target instanceof HTMLSelectElement) {
+          if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+            const direction = e.code === 'ArrowRight' ? 1 : -1;
+            const select = target;
+            const next = (select.selectedIndex + direction + select.options.length) % select.options.length;
+            e.preventDefault();
+            if (next !== select.selectedIndex) {
+              select.selectedIndex = next;
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }
+          return;
+        }
+        if (target instanceof HTMLInputElement && target.type === 'range') return;
+        const characterButton = target?.closest<HTMLElement>('[data-keyboard-character]');
+        if (phase === 'select' && characterButton) {
+          const buttons = Array.from(document.querySelectorAll<HTMLElement>('[data-keyboard-character]'));
+          const index = buttons.indexOf(characterButton);
+          const direction = e.code === 'ArrowLeft' || e.code === 'ArrowUp' ? -1 : 1;
+          const next = buttons[(index + direction + buttons.length) % buttons.length];
+          e.preventDefault();
+          next?.focus({ preventScroll: true });
+          next?.click();
+          return;
+        }
+        e.preventDefault();
+        const surface = document.querySelector<HTMLElement>(help ? '[data-menu-surface="help"]' : '[data-menu-surface]');
+        const candidates = surface
+          ? Array.from(surface.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled])'))
+            .filter(el => el.getClientRects().length > 0)
+          : [];
+        if (phase !== 'race' && !help) {
+          const topbar = document.querySelector<HTMLElement>('[data-menu-topbar]');
+          if (topbar) candidates.push(...Array.from(topbar.querySelectorAll<HTMLElement>('button:not([disabled])')).filter(el => el.getClientRects().length > 0));
+        }
+        if (!candidates.length) return;
+        const index = candidates.indexOf(target as HTMLElement);
+        const direction = e.code === 'ArrowLeft' || e.code === 'ArrowUp' ? -1 : 1;
+        const nextIndex = index < 0 ? 0 : (index + direction + candidates.length) % candidates.length;
+        candidates[nextIndex]?.focus({ preventScroll: true });
+      } else if (e.code === 'Space' && !(target instanceof HTMLButtonElement) && !(target instanceof HTMLSelectElement)) {
+        e.preventDefault();
+      }
     };
     const onBlur = () => { clearInputs(); if (phase === 'race') setPause(true); };
     const onVisibility = () => { audio.setHidden(document.hidden); if (document.hidden) onBlur(); };
@@ -116,7 +191,7 @@ export default function HauntedKart() {
       window.removeEventListener('blur', onBlur);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [phase, help, setPause, clearInputs, closeHelp]);
+  }, [phase, help, setPause, clearInputs, closeHelp, toMenu]);
 
   const toggleMute = () => { audio.start(); audio.setMuted(!muted); };
 

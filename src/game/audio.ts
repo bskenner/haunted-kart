@@ -1,5 +1,4 @@
-import type { RaceEvent, RaceState } from './engine';
-import { ENGINE_GEAR_CONFIG, ENGINE_GEAR_LIMITS, nextGear, gearRpm } from './engineSound.ts';
+import type { Input, RaceEvent, RaceState } from './engine';
 
 export interface AudioSettings { music: number; effects: number; muted: boolean }
 type MusicScene = 'menu' | 'race' | 'results';
@@ -18,6 +17,13 @@ const hz = (note: number) => 440 * 2 ** ((note - 69) / 12);
 // Original minor-key phrases composed for Haunted Kart. No recordings or samples.
 const MENU = [74, 0, 77, 76, 74, 69, 70, 0, 73, 0, 76, 74, 73, 68, 69, 0];
 const RACE = [74, 77, 81, 77, 76, 74, 69, 72, 74, 77, 82, 81, 77, 76, 73, 69];
+const ENGINE_GEAR_CONFIG = [
+  { low: 37, high: 66, cutoff: 380, level: 0.42, wave: 'triangle', overtone: 'sine', ratio: 0.55 },
+  { low: 53, high: 92, cutoff: 760, level: 0.34, wave: 'sawtooth', overtone: 'triangle', ratio: 2 },
+  { low: 73, high: 126, cutoff: 1450, level: 0.3, wave: 'sawtooth', overtone: 'triangle', ratio: 2 },
+  { low: 103, high: 180, cutoff: 2350, level: 0.27, wave: 'sawtooth', overtone: 'sine', ratio: 2.15 },
+] as const;
+const ENGINE_GEAR_LIMITS = [0, 8, 16, 26, 40] as const;
 type EngineGearLayer = {
   oscillator: OscillatorNode;
   overtone: OscillatorNode;
@@ -37,6 +43,11 @@ class GameAudio {
   private engineAudible = false;
   private shiftOsc: OscillatorNode | null = null;
   private shiftGain: GainNode | null = null;
+  private engineBrakeOsc: OscillatorNode | null = null;
+  private engineBrakeFilter: BiquadFilterNode | null = null;
+  private engineBrakeGain: GainNode | null = null;
+  private lastEngineSpeed = 0;
+  private shiftDipUntil = 0;
   private driftGain: GainNode | null = null;
   private driftFilter: BiquadFilterNode | null = null;
   private noise: AudioBuffer | null = null;
@@ -80,9 +91,9 @@ class GameAudio {
       this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
       const data = this.noise.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-      const engineOut = ctx.createGain(); engineOut.gain.value = 0;
-      this.engineGain = engineOut;
-      engineOut.connect(this.effectsBus!);
+      const engineBus = ctx.createGain(); engineBus.gain.value = 0;
+      this.engineGain = engineBus;
+      engineBus.connect(this.effectsBus);
       this.engineGears = ENGINE_GEAR_CONFIG.map(config => {
         const filter = ctx.createBiquadFilter();
         filter.type = 'lowpass'; filter.frequency.value = config.cutoff; filter.Q.value = 0.65;
@@ -92,7 +103,7 @@ class GameAudio {
         const overtone = ctx.createOscillator();
         overtone.type = config.overtone; overtone.frequency.value = config.low * config.ratio;
         oscillator.connect(filter); overtone.connect(filter);
-        filter.connect(gain).connect(engineOut);
+        filter.connect(gain).connect(engineBus);
         oscillator.start(); overtone.start();
         return { oscillator, overtone, filter, gain };
       });
@@ -100,8 +111,14 @@ class GameAudio {
       shiftFilter.type = 'bandpass'; shiftFilter.frequency.value = 480; shiftFilter.Q.value = 0.8;
       this.shiftGain = ctx.createGain(); this.shiftGain.gain.value = 0;
       this.shiftOsc = ctx.createOscillator(); this.shiftOsc.type = 'triangle'; this.shiftOsc.frequency.value = 220;
-      this.shiftOsc.connect(shiftFilter).connect(this.shiftGain).connect(engineOut);
+      this.shiftOsc.connect(shiftFilter).connect(this.shiftGain).connect(this.effectsBus);
       this.shiftOsc.start();
+      this.engineBrakeFilter = ctx.createBiquadFilter();
+      this.engineBrakeFilter.type = 'lowpass'; this.engineBrakeFilter.frequency.value = 450; this.engineBrakeFilter.Q.value = 0.55;
+      this.engineBrakeGain = ctx.createGain(); this.engineBrakeGain.gain.value = 0;
+      this.engineBrakeOsc = ctx.createOscillator(); this.engineBrakeOsc.type = 'triangle'; this.engineBrakeOsc.frequency.value = 80;
+      this.engineBrakeOsc.connect(this.engineBrakeFilter).connect(this.engineBrakeGain).connect(engineBus);
+      this.engineBrakeOsc.start();
       const drift = ctx.createBufferSource(); drift.buffer = this.noise; drift.loop = true;
       this.driftFilter = ctx.createBiquadFilter(); this.driftFilter.type = 'bandpass'; this.driftFilter.frequency.value = 1800; this.driftFilter.Q.value = 2;
       this.driftGain = ctx.createGain(); this.driftGain.gain.value = 0;
@@ -144,6 +161,8 @@ class GameAudio {
         layer.gain.gain.cancelScheduledValues(t);
         layer.gain.gain.setTargetAtTime(0, t, 0.025);
       });
+      this.engineBrakeGain?.gain.cancelScheduledValues(t);
+      this.engineBrakeGain?.gain.setTargetAtTime(0, t, 0.025);
       this.shiftGain?.gain.cancelScheduledValues(t);
       this.shiftGain?.gain.setTargetAtTime(0, t, 0.02);
       this.driftGain?.gain.cancelScheduledValues(t);
@@ -227,44 +246,60 @@ class GameAudio {
     const gain = this.shiftGain.gain;
     gain.cancelScheduledValues(t);
     gain.setValueAtTime(0.0001, t);
-    gain.linearRampToValueAtTime(0.046, t + 0.035);
-    gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    gain.linearRampToValueAtTime(0.028, t + 0.025);
+    gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
     this.shiftOsc.frequency.cancelScheduledValues(t);
-    this.shiftOsc.frequency.setValueAtTime(upshift ? 250 : 185, t);
-    this.shiftOsc.frequency.exponentialRampToValueAtTime(upshift ? 590 : 430, t + 0.075);
+    this.shiftOsc.frequency.setValueAtTime(upshift ? 330 : 235, t);
+    this.shiftOsc.frequency.exponentialRampToValueAtTime(upshift ? 620 : 410, t + 0.075);
   }
 
-  setEngine(speed: number, active: boolean, drift = 0, boosted = false, turbo = false) {
-    if (!this.ctx || !this.engineGain || this.engineGears.length !== ENGINE_GEAR_CONFIG.length) return;
+  setEngine(speed: number, active: boolean, drift = 0, throttle = false, boosted = false, turbo = false) {
+    if (!this.ctx || !this.engineGain || !this.engineBrakeOsc || !this.engineBrakeGain
+      || this.engineGears.length !== ENGINE_GEAR_CONFIG.length) return;
     const t = this.ctx.currentTime;
     if (t - this.lastEngineUpdate < 0.025 && active) return;
-    this.lastEngineUpdate = t;
+    const elapsed = this.lastEngineUpdate < 0 ? 0.025 : Math.max(0.025, t - this.lastEngineUpdate);
     const engineSpeed = Math.min(40, Math.abs(speed));
+    const deceleration = Math.max(0, (this.lastEngineSpeed - engineSpeed) / elapsed);
+    this.lastEngineUpdate = t;
+    this.lastEngineSpeed = engineSpeed;
     const audible = active && !this.settings.muted && !this.hidden && !this.paused;
     this.engineAudible = audible;
     const previousGear = this.currentGear;
-    this.currentGear = nextGear(engineSpeed, this.currentGear + 1) - 1;
+    while (this.currentGear < ENGINE_GEAR_CONFIG.length - 1
+      && engineSpeed >= ENGINE_GEAR_LIMITS[this.currentGear + 1]) this.currentGear++;
+    while (this.currentGear > 0
+      && engineSpeed < ENGINE_GEAR_LIMITS[this.currentGear] - 1.3) this.currentGear--;
     if (audible && this.currentGear !== previousGear) {
       this.shiftCount++;
       this.playShift(this.currentGear > previousGear, t);
+      if (this.currentGear > previousGear) this.shiftDipUntil = t + 0.11;
     }
 
-    const rpm = gearRpm(engineSpeed, this.currentGear + 1);
+    const gearStart = ENGINE_GEAR_LIMITS[this.currentGear];
+    const gearEnd = ENGINE_GEAR_LIMITS[this.currentGear + 1];
+    const rpm = Math.max(0, Math.min(1, (engineSpeed - gearStart) / (gearEnd - gearStart)));
+    const loadedRpm = rpm * (throttle ? 1 : 0.82);
     const pitchBoost = boosted ? 1.035 : turbo ? 1.015 : 1;
     this.engineGears.forEach((layer, index) => {
       const profile = ENGINE_GEAR_CONFIG[index];
-      const frequency = (profile.low + (profile.high - profile.low) * rpm) * pitchBoost;
+      const frequency = (profile.low + (profile.high - profile.low) * loadedRpm) * pitchBoost;
       layer.oscillator.frequency.setTargetAtTime(frequency, t, 0.045);
       layer.overtone.frequency.setTargetAtTime(frequency * profile.ratio, t, 0.045);
       layer.filter.frequency.setTargetAtTime(
-        profile.cutoff * (0.84 + rpm * 0.4 + (boosted ? 0.18 : 0)),
+        profile.cutoff * (0.58 + loadedRpm * 0.34 + (throttle ? 0.42 : 0) + (boosted ? 0.14 : 0)),
         t, 0.08,
       );
       layer.gain.gain.setTargetAtTime(audible && index === this.currentGear ? profile.level : 0, t, index === this.currentGear ? 0.045 : 0.025);
     });
     const intensity = (turbo ? 1.12 : 1) * (boosted ? 1.32 : 1);
     const normalized = engineSpeed / 40;
-    this.engineGain.gain.setTargetAtTime(audible ? (0.078 + normalized * 0.038) * intensity : 0, t, 0.055);
+    const shiftDip = t < this.shiftDipUntil ? 0.72 : 1;
+    this.engineGain.gain.setTargetAtTime(audible ? (0.072 + normalized * 0.036 + (throttle ? 0.014 : 0)) * intensity * shiftDip : 0, t, 0.055);
+    const engineBrake = audible && !throttle && engineSpeed > 4 ? Math.min(1, deceleration / 14) : 0;
+    this.engineBrakeOsc.frequency.setTargetAtTime(68 + engineSpeed * 2.8 + engineBrake * 18, t, 0.08);
+    this.engineBrakeFilter?.frequency.setTargetAtTime(340 + engineSpeed * 15, t, 0.1);
+    this.engineBrakeGain.gain.setTargetAtTime(engineBrake * 0.075, t, 0.045);
     const driftAudible = audible && drift > 0;
     this.driftGain?.gain.setTargetAtTime(driftAudible ? 0.04 + Math.min(drift, 2) * 0.025 : 0, t, 0.04);
     this.driftFilter?.frequency.setTargetAtTime(1300 + Math.min(drift, 2) * 450, t, 0.1);
@@ -307,12 +342,14 @@ class GameAudio {
       notes.forEach((n, i) => this.tone(hz(n), type === 'finish' ? 0.45 : 0.22, 'triangle', 0.17, i * 0.13));
     }
   }
-  sync(race: RaceState, paused: boolean) {
+  sync(race: RaceState, paused: boolean, input?: Input) {
     if (this.lastRace !== race) {
       this.lastRace = race;
       this.cursor = 0;
       this.currentGear = 0;
       this.lastEngineUpdate = -1;
+      this.lastEngineSpeed = 0;
+      this.shiftDipUntil = 0;
       this.engineAudible = false;
       this.engineGain?.gain.cancelScheduledValues(this.ctx?.currentTime ?? 0);
       this.engineGain?.gain.setTargetAtTime(0, this.ctx?.currentTime ?? 0, 0.018);
@@ -323,6 +360,7 @@ class GameAudio {
       this.shiftGain?.gain.cancelScheduledValues(this.ctx?.currentTime ?? 0);
       this.shiftGain?.gain.setTargetAtTime(0, this.ctx?.currentTime ?? 0, 0.018);
       this.driftGain?.gain.setTargetAtTime(0, this.ctx?.currentTime ?? 0, 0.018);
+      this.engineBrakeGain?.gain.setTargetAtTime(0, this.ctx?.currentTime ?? 0, 0.018);
     }
     if (paused) { this.setEngine(0, false); return; }
     for (const event of race.events) if (event.seq > this.cursor) { this.effect(event); this.cursor = event.seq; }
@@ -331,6 +369,7 @@ class GameAudio {
       player.speed,
       race.countdown === 0 && player.finishTime === null && !race.finished,
       player.drifting ? player.driftCharge : 0,
+      !!input?.accelerate,
       player.boost > 0,
       race.motorClass === 'turbo',
     );
@@ -347,7 +386,7 @@ class GameAudio {
       engineAudible: this.engineAudible,
       enginePitch: this.engineGears[this.currentGear]?.oscillator.frequency.value,
       engineLevel: this.engineGain?.gain.value,
-      engineNodes: this.engineGears.length * 2 + (this.shiftOsc ? 1 : 0) };
+       engineNodes: this.engineGears.length * 2 + (this.shiftOsc ? 1 : 0) + (this.engineBrakeOsc ? 1 : 0) };
   }
   dispose() {
     if (this.timer) clearInterval(this.timer);

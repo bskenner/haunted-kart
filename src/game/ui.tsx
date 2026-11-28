@@ -24,7 +24,7 @@ export function ItemIcon({ id, className = 'w-8 h-8' }: { id: string; className?
 
 export function TopBar({ muted, onMute, onHelp, children }: { muted: boolean; onMute: () => void; onHelp: () => void; children?: ReactNode }) {
   return (
-    <div className="absolute top-3 right-3 z-30 flex gap-2">
+    <div data-menu-topbar className="absolute top-3 right-3 z-30 flex gap-2">
       {children}
       <button aria-label="Como jogar" data-testid="button-help" onClick={onHelp} className="btn-ghost rounded-xl w-11 h-11 grid place-items-center"><HelpCircle className="w-5 h-5" /></button>
       <button aria-label={muted ? 'Ativar som' : 'Desativar som'} data-testid="button-mute" onClick={onMute} className="btn-ghost rounded-xl w-11 h-11 grid place-items-center">
@@ -36,17 +36,17 @@ export function TopBar({ muted, onMute, onHelp, children }: { muted: boolean; on
 
 export function TitleScreen({ onPlay, onHelp, ...difficulty }: { onPlay: () => void; onHelp: () => void } & DifficultyProps) {
   return (
-    <div className="title-screen absolute inset-0 z-20 flex flex-col items-center justify-between p-6 pb-5 pointer-events-none overflow-y-auto gap-5">
-      <div className="mt-[4vh] text-center rise">
+    <div data-menu-surface="title" className="title-screen absolute inset-0 z-20 flex flex-col items-center justify-between p-6 pb-5 pointer-events-none gap-5">
+      <div className="title-brand mt-[4vh] text-center rise">
         <p className="text-xs sm:text-sm tracking-[0.5em] uppercase text-purple-200/80 mb-2">Corrida de monstros sob a lua cheia</p>
         <h1 className="logo-text text-[19vw] sm:text-[9rem] leading-[0.85] flicker" data-testid="text-title">Haunted<br />Kart</h1>
       </div>
-      <div className="flex flex-col items-center gap-2.5 pointer-events-auto rise" style={{ animationDelay: '.3s' }}>
+      <div className="title-menu flex flex-col items-center gap-2.5 pointer-events-auto rise" style={{ animationDelay: '.3s' }}>
         <button data-testid="button-play" onClick={onPlay} className="btn-pumpkin pulse-ring rounded-2xl px-14 py-4 text-2xl font-extrabold uppercase tracking-wider">Jogar</button>
         <button data-testid="button-instructions" onClick={onHelp} className="text-purple-200 underline underline-offset-4 decoration-orange-400/60 hover:text-orange-300">Como jogar</button>
         <DifficultySelect {...difficulty} />
         <SoundControls />
-        <p className="text-xs text-purple-300/60 font-mono">3 voltas no Cemitério da Colina Torta</p>
+        <p className="menu-key-hint text-xs text-purple-300/70 font-mono text-center">3 voltas no Cemitério da Colina Torta · Setas navegam · Enter/Espaço confirma</p>
       </div>
     </div>
   );
@@ -70,22 +70,22 @@ export function SelectScreen({ selectedId, onSelect, onRace, onBack, ...difficul
   const ch = CHARACTERS[idx];
   const step = (d: number) => onSelect(CHARACTERS[(idx + d + CHARACTERS.length) % CHARACTERS.length].id);
   return (
-    <div className="absolute inset-0 z-20 flex flex-col md:flex-row md:items-stretch justify-end md:justify-start p-3 md:p-6 gap-3 pointer-events-none">
-      <div className="panel rounded-3xl p-4 md:p-6 md:w-[420px] pointer-events-auto rise flex flex-col gap-4 min-h-0 max-h-full overflow-y-auto">
+    <div data-menu-surface="select" className="select-screen absolute inset-0 z-20 flex flex-col md:flex-row md:items-stretch justify-end md:justify-start p-3 md:p-6 gap-3 pointer-events-none">
+      <div className="select-panel panel rounded-3xl p-4 md:p-6 md:w-[420px] pointer-events-auto rise flex flex-col gap-4 min-h-0 max-h-full overflow-hidden">
         <div className="flex items-center gap-2">
           <button data-testid="button-back" onClick={onBack} className="btn-ghost rounded-xl w-9 h-9 grid place-items-center" aria-label="Voltar"><ChevronLeft className="w-5 h-5" /></button>
           <h2 className="text-sm uppercase tracking-[0.3em] text-purple-200">Escolha seu monstro</h2>
         </div>
-        <div className="grid grid-cols-6 md:grid-cols-3 gap-2">
+        <div data-keyboard-grid="characters" className="character-grid grid grid-cols-6 md:grid-cols-3 gap-2">
           {CHARACTERS.map(c => (
-            <button key={c.id} aria-label={c.name} aria-pressed={c.id === selectedId} data-testid={`button-character-${c.id}`} onClick={() => onSelect(c.id)}
+            <button key={c.id} aria-label={c.name} aria-pressed={c.id === selectedId} data-keyboard-character={c.id} data-testid={`button-character-${c.id}`} onClick={() => onSelect(c.id)}
               className={`rounded-xl p-1.5 md:p-3 text-left transition-all border ${c.id === selectedId ? 'border-orange-400 bg-orange-500/15 -translate-y-0.5' : 'border-purple-700/40 bg-purple-950/40 hover:bg-purple-900/50'}`}>
               <div className="w-full aspect-square md:aspect-[2/1] rounded-lg mb-0 md:mb-1.5" style={{ background: `radial-gradient(circle at 40% 40%, ${c.color}, ${c.accent})` }} />
               <div className="hidden md:block text-sm font-semibold truncate">{c.name}</div>
             </button>
           ))}
         </div>
-        <div>
+        <div className="character-details">
           <div className="flex items-center justify-between">
             <button onClick={() => step(-1)} className="btn-ghost rounded-lg w-8 h-8 grid place-items-center md:hidden" aria-label="Anterior" data-testid="button-prev"><ChevronLeft className="w-4 h-4" /></button>
             <h3 className="font-display text-4xl md:text-5xl" style={{ color: ch.color }} data-testid="text-character-name">{ch.name}</h3>
@@ -93,12 +93,13 @@ export function SelectScreen({ selectedId, onSelect, onRace, onBack, ...difficul
           </div>
           <p className="text-purple-200/90 text-sm mt-1 min-h-[2.5em]">{ch.description}</p>
         </div>
-        <div className="space-y-2.5">
+        <div className="character-stat-list space-y-2.5">
           <Stat label="Velocidade" value={ch.speed} color="#ff7a1a" />
           <Stat label="Aceleração" value={ch.acceleration} color="#c78bff" />
           <Stat label="Dirigibilidade" value={ch.handling} color="#9be255" />
         </div>
         <DifficultySelect {...difficulty} />
+        <p className="select-key-hint text-[10px] text-purple-300/70 text-center">←/→ escolhem personagem · Enter/Espaço confirma · Esc volta</p>
         <button data-testid="button-race" onClick={onRace} className="btn-pumpkin rounded-2xl py-3.5 text-xl font-extrabold uppercase tracking-wider flex items-center justify-center gap-2 md:mt-auto">
           <Flag className="w-5 h-5" /> Correr
         </button>
@@ -119,9 +120,9 @@ function rankOf(race: RaceState) {
 }
 
 interface Snap {
-  lap: number; pos: number; total: number; time: number; speed: number; lane: number; item: string | null;
+  lap: number; pos: number; total: number; time: number; speed: number; lane: number; heading: number; trackAngle: number; item: string | null;
   countdown: number; message: string; boost: boolean; drift: number; offroad: boolean; wrongWay: boolean;
-  pickup: boolean; used: boolean; hit: boolean; racers: { id: number; progress: number }[];
+  pickup: boolean; used: boolean; hit: boolean; racers: { id: number; progress: number; x: number; z: number }[];
   roulette: number; recovery: number; hop: number; direction: number; draft: number; drafting: boolean; difficulty: string;
   motorClass: MotorClass;
 }
@@ -134,10 +135,10 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
       const p = race.racers[0];
       setS({
         lap: Math.min(LAPS, Math.floor(Math.max(0, p.progress) / TRACK_LENGTH) + 1),
-        pos: rankOf(race), total: race.racers.length, time: p.finishTime ?? race.time, speed: p.finishTime === null ? p.speed : 0, lane: p.lane,
+        pos: rankOf(race), total: race.racers.length, time: p.finishTime ?? race.time, speed: p.finishTime === null ? p.speed : 0, lane: p.lane, heading: p.heading, trackAngle: p.trackAngle,
         item: p.item, countdown: race.countdown, message: race.messageTime > 0 ? race.message : '', boost: p.boost > 0, drift: p.drifting ? p.driftCharge : 0,
         offroad: p.offroad, wrongWay: p.wrongWay > 0.35, pickup: p.pickupFlash > 0, used: p.useFlash > 0, hit: p.hitFlash > 0,
-        racers: race.racers.map(r => ({ id: r.id, progress: r.progress })),
+        racers: race.racers.map(r => ({ id: r.id, progress: r.progress, x: r.x, z: r.z })),
         roulette: p.roulette, recovery: p.recovery, hop: p.hop, direction: p.driftDirection,
         draft: p.draftCharge, drafting: p.draftActive, difficulty: DIFFICULTIES[race.difficulty].label,
         motorClass: race.motorClass,
@@ -154,7 +155,8 @@ export function HUD({ raceRef, pausedRef }: { raceRef: MutableRefObject<RaceStat
   const showGo = s.countdown <= 0 && s.time < 0.8;
   return (
     <div className="absolute inset-0 z-20 pointer-events-none no-select" data-testid="race-hud"
-      data-lane={s.lane.toFixed(3)} data-drift={s.drift.toFixed(3)} data-drift-tier={driftTier(s.drift)} data-drift-direction={s.direction} data-hop={s.hop.toFixed(3)}
+      data-lane={s.lane.toFixed(3)} data-heading={s.heading.toFixed(4)} data-track-angle={s.trackAngle.toFixed(4)}
+      data-drift={s.drift.toFixed(3)} data-drift-tier={driftTier(s.drift)} data-drift-direction={s.direction} data-hop={s.hop.toFixed(3)}
       data-offroad={s.offroad} data-boost={s.boost} data-item={s.item ?? ''} data-item-ready={!!s.item && s.roulette === 0}
       data-countdown={s.countdown.toFixed(3)} data-roulette={s.roulette > 0} data-difficulty={s.difficulty} data-motor-class={s.motorClass} data-recovery={s.recovery.toFixed(2)}>
       {s.hit && <div className="absolute inset-0 bg-red-500/15 border-4 border-red-400/40" />}
@@ -247,12 +249,12 @@ export function TouchControls({ touchRef, onItem }: { touchRef: MutableRefObject
 export function ResultsScreen({ results, motorClass, playerId, onAgain, onChange, onMenu }: { results: RaceResult[]; motorClass: MotorClass; playerId: number; onAgain: () => void; onChange: () => void; onMenu: () => void }) {
   const sorted = [...results].sort((a, b) => a.position - b.position);
   return (
-    <div className="absolute inset-0 z-20 flex items-start justify-center p-4 overflow-y-auto">
-      <div className="panel rounded-3xl p-5 md:p-8 w-full max-w-lg rise my-auto">
+    <div data-menu-surface="results" className="results-screen absolute inset-0 z-20 flex items-center justify-center p-4 overflow-hidden">
+      <div className="results-panel panel rounded-3xl p-5 md:p-8 w-full max-w-lg rise my-auto">
         <p className="text-xs uppercase tracking-[0.4em] text-purple-300 text-center">Resultado final</p>
         <h2 className="logo-text text-6xl text-center mb-2">Bandeirada!</h2>
         <p data-testid="result-motor-class" className="text-center text-cyan-200 text-sm mb-4">Velocidade do motor: {MOTOR_CLASSES[motorClass].label}</p>
-        <ol className="space-y-1.5">
+        <ol className="results-list space-y-1.5">
           {sorted.map(r => {
             const c = CHARACTERS.find(ch => ch.id === r.id);
             return (
@@ -268,11 +270,12 @@ export function ResultsScreen({ results, motorClass, playerId, onAgain, onChange
             );
           })}
         </ol>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-6">
+        <div className="results-actions grid grid-cols-1 sm:grid-cols-2 gap-2 mt-6">
           <button data-testid="button-race-again" onClick={onAgain} className="btn-pumpkin rounded-2xl py-3 font-extrabold uppercase flex items-center justify-center gap-2"><RotateCcw className="w-4 h-4" /> Correr de novo</button>
           <button data-testid="button-change-character" onClick={onChange} className="btn-ghost rounded-2xl py-3 font-semibold flex items-center justify-center gap-2"><Users className="w-4 h-4" /> Trocar personagem</button>
         </div>
         <button data-testid="button-menu" onClick={onMenu} className="w-full mt-2 text-sm text-purple-300 hover:text-orange-300 py-2 flex items-center justify-center gap-1"><Home className="w-4 h-4" /> Menu principal</button>
+        <p className="menu-key-hint text-[10px] text-purple-300/70 text-center">Setas navegam · Enter/Espaço confirma · Esc volta</p>
       </div>
     </div>
   );
@@ -284,8 +287,8 @@ export function PauseButton({ onClick }: { onClick: () => void }) {
 
 export function PauseOverlay({ onResume, onRestart, onMenu }: { onResume: () => void; onRestart: () => void; onMenu: () => void }) {
   return (
-    <div className="absolute inset-0 z-40 flex items-start justify-center bg-[#12081f]/70 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="panel rounded-3xl p-6 w-full max-w-xs text-center rise my-auto">
+    <div data-menu-surface="pause" className="pause-screen absolute inset-0 z-40 flex items-center justify-center bg-[#12081f]/70 backdrop-blur-sm p-4 overflow-hidden">
+      <div className="pause-panel panel rounded-3xl p-6 w-full max-w-xs text-center rise my-auto">
         <h2 className="logo-text text-5xl mb-4">Pausa</h2>
         <div className="flex flex-col gap-2">
           <SoundControls />
@@ -293,6 +296,7 @@ export function PauseOverlay({ onResume, onRestart, onMenu }: { onResume: () => 
           <button data-testid="button-restart" onClick={onRestart} className="btn-ghost rounded-2xl py-3 font-semibold">Reiniciar corrida</button>
           <button data-testid="button-quit" onClick={onMenu} className="btn-ghost rounded-2xl py-3 font-semibold">Sair para o menu</button>
         </div>
+        <p className="menu-key-hint text-[10px] text-purple-300/70 text-center mt-2">Setas navegam · Enter/Espaço confirma · Esc volta</p>
       </div>
     </div>
   );
@@ -302,24 +306,25 @@ export function Instructions({ onClose }: { onClose: () => void }) {
   const rows: [string, string][] = [
     ['Seta para cima / W', 'Acelerar'], ['Seta para baixo / S', 'Frear; segure parado para dar ré'], ['Setas laterais / A D', 'Virar'],
     ['Espaço', 'Usar o poder após a roleta'], ['Shift (ou Z/X)', 'Pular e derrapar; solte para turbinar'], ['Esc / P', 'Pausar'],
+    ['Setas / Enter / Espaço / Esc', 'Navegar, confirmar e voltar nos menus'],
   ];
   return (
-    <div className="absolute inset-0 z-50 flex items-start justify-center bg-[#12081f]/75 backdrop-blur-sm p-4 overflow-y-auto" onClick={onClose}>
-      <div className="panel rounded-3xl p-6 w-full max-w-lg rise relative my-auto" onClick={e => e.stopPropagation()}>
+    <div data-menu-surface="help" className="help-screen absolute inset-0 z-50 flex items-center justify-center bg-[#12081f]/75 backdrop-blur-sm p-4 overflow-hidden" onClick={onClose}>
+      <div className="help-panel panel rounded-3xl p-6 w-full max-w-lg rise relative my-auto" onClick={e => e.stopPropagation()}>
         <button onClick={onClose} aria-label="Fechar" data-testid="button-close-help" className="absolute top-4 right-4 btn-ghost rounded-xl w-9 h-9 grid place-items-center"><X className="w-4 h-4" /></button>
         <h2 className="logo-text text-5xl mb-1">Como jogar</h2>
-        <p className="text-purple-200 text-sm mb-4">Três voltas pelo cemitério. Pegue as caixas roxas, solte as maldições e cruze a linha antes dos outros monstros.</p>
-        <p className="text-cyan-200 text-sm mb-4">Velocidade do motor: Normal para o ritmo clássico, Turbo para mais velocidade e aceleração de todos os karts. A dificuldade muda o desafio dos adversários, independentemente do motor.</p>
-        <p className="text-orange-200 text-sm mb-4">Largada especial: aperte a seta para cima (ou W) quando aparecer o 1 e segure até o Vai! para ganhar turbo. Se acelerar antes, o kart sai normalmente, só sem o impulso extra. Espaço só usa poderes.</p>
-        <p className="text-purple-200 text-sm mb-4">Na derrapagem, a direção fica travada: use as setas para fechar ou abrir o arco. Faíscas azuis dão turbo; laranjas dão superturbo. Siga de perto outro kart para pegar vácuo e passe pelas faixas ciano para ganhar impulso. Após um ataque, você recebe proteção breve.</p>
-        <div className="mouse-only space-y-1.5 mb-4">
+        <p className="help-copy text-purple-200 text-sm mb-4">Três voltas pelo cemitério. Pegue as caixas roxas, solte as maldições e cruze a linha antes dos outros monstros.</p>
+        <p className="help-copy text-cyan-200 text-sm mb-4">Velocidade do motor: Normal para o ritmo clássico, Turbo para mais velocidade e aceleração de todos os karts. A dificuldade muda o desafio dos adversários, independentemente do motor.</p>
+        <p className="help-copy text-orange-200 text-sm mb-4">Largada especial: aperte a seta para cima (ou W) quando aparecer o 1 e segure até o Vai! Espaço só usa poderes. Acelerar antes ou depois apenas perde o turbo da largada; o kart acelera normalmente no Vai!</p>
+        <p className="help-copy text-purple-200 text-sm mb-4">Na derrapagem, a direção fica travada: use as setas para fechar ou abrir o arco. Faíscas azuis dão turbo; laranjas dão superturbo. Siga de perto outro kart para pegar vácuo e passe pelas faixas ciano para ganhar impulso. Após um ataque, você recebe proteção breve.</p>
+        <div className="help-rows mouse-only space-y-1.5 mb-4">
           {rows.map(([k, v]) => (
             <div key={k} className="flex justify-between gap-3 text-sm border-b border-purple-800/50 pb-1.5"><span className="font-mono text-orange-300">{k}</span><span className="text-right text-purple-100">{v}</span></div>
           ))}
         </div>
-        <p className="touch-only text-sm text-purple-100 mb-4">Toque nas setas à esquerda para virar. À direita: Gás acelera, Freio freia ou dá ré, Derrapar pula e derrapa, e Poder usa o item sorteado.</p>
-        <h3 className="text-xs uppercase tracking-[0.3em] text-purple-300 mb-2">Itens</h3>
-        <div className="grid grid-cols-5 gap-2">
+        <p className="help-copy touch-only text-sm text-purple-100 mb-4">Toque nas setas à esquerda para virar. À direita: Gás acelera, Freio freia ou dá ré, Derrapar pula e derrapa, e Poder usa o item sorteado.</p>
+        <h3 className="help-items-title text-xs uppercase tracking-[0.3em] text-purple-300 mb-2">Itens</h3>
+        <div className="help-items grid grid-cols-5 gap-2">
           {ITEMS.map(it => (
             <div key={it.id} className="flex flex-col items-center text-center gap-1 rounded-xl bg-purple-950/50 p-2" style={{ color: it.color }}>
               <ItemIcon id={it.id} className="w-7 h-7" />
