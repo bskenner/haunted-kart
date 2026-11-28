@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { KEY_MAP } from '../src/game/controls.ts';
-import { BOOST_PADS, bumpRacers, DIFFICULTIES, updateDraft } from '../src/game/arcade.ts';
+import { BOOST_PADS, bumpRacers, DIFFICULTIES, parseDifficulty, updateDraft } from '../src/game/arcade.ts';
 import { GEAR_COUNT, nextGear, gearRpm, engineTone } from '../src/game/engineSound.ts';
 import { MOTOR_CLASSES } from '../src/game/motors.ts';
 import { CHARACTERS, ITEMS, TRACK_LENGTH, START_STRAIGHT_LENGTH, WALL_EDGE, ROAD_EDGE, CHECKPOINTS, driftTier, createRace, updateRace, useItem, trackPoint, kartPosition, placeRacer, projectOnTrack, authorizeProgress, type Racer, type Input } from '../src/game/engine.ts';
@@ -431,7 +431,17 @@ test('boost pads trigger at speed on the painted lane, not adjacent lanes or rev
   missed.racers[0].speed = 26; updateRace(missed, 1 / 60, gas);
   assert.equal(missed.racers[0].boost, 0);
 });
-test('difficulty changes real AI pace while preserving three-lap finishes', () => {
+test('opponent difficulty has only Normal and Berserk, and Berserk is harsher', () => {
+  assert.deepEqual(Object.keys(DIFFICULTIES), ['normal', 'berserk']);
+  assert.equal(DIFFICULTIES.normal.label, 'Normal');
+  assert.equal(DIFFICULTIES.berserk.label, 'Berserk');
+  assert.equal(DIFFICULTIES.normal.pace, 0.96);
+  assert.ok(DIFFICULTIES.berserk.pace >= 1.025);
+  assert.ok(DIFFICULTIES.berserk.pace > DIFFICULTIES.normal.pace);
+  assert.ok(DIFFICULTIES.berserk.aggression < 0.72);
+  assert.ok(DIFFICULTIES.berserk.aggression < DIFFICULTIES.normal.aggression);
+  assert.ok(DIFFICULTIES.berserk.aheadSlack < DIFFICULTIES.normal.aheadSlack);
+  assert.ok(DIFFICULTIES.berserk.racingLine > DIFFICULTIES.normal.racingLine);
   const mean: number[] = [];
   for (const difficulty of Object.keys(DIFFICULTIES) as (keyof typeof DIFFICULTIES)[]) {
     const race = createRace(0, difficulty); race.countdown = 0; race.boxes = [];
@@ -440,7 +450,20 @@ test('difficulty changes real AI pace while preserving three-lap finishes', () =
     runFollow(race, 100);
     assert.ok(race.finished); assert.equal(race.results.length, 6);
   }
-  assert.ok(mean[0] < mean[1] && mean[1] < mean[2], JSON.stringify(mean));
+  assert.ok(mean[0] < mean[1], JSON.stringify(mean));
+});
+test('saved difficulty migrates Fácil to Normal and Difícil to Berserk', () => {
+  assert.equal(parseDifficulty(null), 'normal');
+  assert.equal(parseDifficulty(''), 'normal');
+  assert.equal(parseDifficulty('normal'), 'normal');
+  assert.equal(parseDifficulty('easy'), 'normal');
+  assert.equal(parseDifficulty('facil'), 'normal');
+  assert.equal(parseDifficulty('Fácil'), 'normal');
+  assert.equal(parseDifficulty('berserk'), 'berserk');
+  assert.equal(parseDifficulty('hard'), 'berserk');
+  assert.equal(parseDifficulty('dificil'), 'berserk');
+  assert.equal(parseDifficulty('Difícil'), 'berserk');
+  assert.equal(parseDifficulty('unknown'), 'normal');
 });
 test('Space action neither starts a drift nor triggers a rocket launch', () => {
   const race = createRace(0);
@@ -451,8 +474,8 @@ test('Space action neither starts a drift nor triggers a rocket launch', () => {
 
 test('motor defaults to Normal and remains independent of AI difficulty', () => {
   assert.equal(createRace(0).motorClass, 'normal');
-  const race = createRace(0, 'hard', 'turbo');
-  assert.equal(race.difficulty, 'hard'); assert.equal(race.motorClass, 'turbo');
+  const race = createRace(0, 'berserk', 'turbo');
+  assert.equal(race.difficulty, 'berserk'); assert.equal(race.motorClass, 'turbo');
 });
 test('Turbo raises acceleration for every racer, not only the human', () => {
   const normal = createRace(0), turbo = createRace(0, 'normal', 'turbo');
@@ -484,7 +507,7 @@ test('Turbo top speed is 22 percent higher and steering has stronger grip', () =
   assert.ok(MOTOR_CLASSES.turbo.camera > MOTOR_CLASSES.normal.camera);
 });
 test('both motor classes finish all three laps at every difficulty without stuck racers', () => {
-  for (const motorClass of ['normal', 'turbo'] as const) for (const difficulty of ['easy', 'normal', 'hard'] as const) {
+  for (const motorClass of ['normal', 'turbo'] as const) for (const difficulty of ['normal', 'berserk'] as const) {
     const race = createRace(0, difficulty, motorClass);
     runFollow(race, 110);
     assert.ok(race.finished, `${motorClass}/${difficulty}`);
@@ -628,7 +651,7 @@ test('a fresh race clears mid-race items, hazards, projectiles and timers', () =
   dirty.projectiles.push({ t: 0.5, lane: 1, life: 2, owner: 0 });
   dirty.announcedLap = 2;
   dirty.finished = true;
-  const race = createRace(3, 'hard', 'turbo');
+  const race = createRace(3, 'berserk', 'turbo');
   assert.equal(race.countdown, 3);
   assert.equal(race.time, 0);
   assert.equal(race.finished, false);
@@ -637,7 +660,7 @@ test('a fresh race clears mid-race items, hazards, projectiles and timers', () =
   assert.equal(race.announcedLap, 0);
   assert.equal(race.results.length, 0);
   assert.ok(race.racers.every(r => r.speed === 0 && r.boost === 0 && r.item === null && r.finishTime === null));
-  assert.equal(race.difficulty, 'hard');
+  assert.equal(race.difficulty, 'berserk');
   assert.equal(race.motorClass, 'turbo');
   assert.equal(race.racers[0].id, 3);
 });

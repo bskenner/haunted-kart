@@ -397,13 +397,13 @@ function stepRace(race: RaceState, dt: number, input: Input, manualPlayer = true
     if (!isPlayer) {
       // Bounded +/- adjustments around the middle of the field, not teleports
       // or a hidden speed penalty targeting only the human player.
-      const catchup = clamp((pack - racer.progress) / 150, -0.035, difficulty.catchup);
+      const catchup = clamp((pack - racer.progress) / 150, -difficulty.aheadSlack, difficulty.catchup);
       maxSpeed *= difficulty.pace + 0.012 * Math.sin(race.time * 0.37 + index * 2) + catchup;
       maxSpeed *= 1 - Math.min(0.12, Math.abs(curve) * 0.5);
       // Look ahead, take the inside gently and leave room to overtake.
-      const distant = trackPoint(t + 0.045 * motor.speed);
+      const distant = trackPoint(t + 0.045 * difficulty.racingLine * motor.speed);
       const bend = Math.atan2(Math.sin(distant.angle - p.angle), Math.cos(distant.angle - p.angle));
-      let targetLane = Math.sin(index * 2.3) * 0.85 - clamp(bend * 4.5, -2.2, 2.2);
+      let targetLane = Math.sin(index * 2.3) * 0.85 - clamp(bend * 4.5 * difficulty.racingLine, -2.2, 2.2);
       const itemLookAhead = 26 * motor.speed;
       let nearest = itemLookAhead;
       if (!racer.item) for (const box of race.boxes) {

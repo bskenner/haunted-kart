@@ -1,18 +1,33 @@
 import type { Racer, RaceState } from './engine';
 
 export const DIFFICULTIES = {
-  easy: { label: 'Fácil', pace: 0.85, catchup: 0.08, aggression: 1.45 },
-  normal: { label: 'Normal', pace: 0.96, catchup: 0.065, aggression: 1 },
-  hard: { label: 'Difícil', pace: 1.025, catchup: 0.05, aggression: 0.72 },
+  // Normal keeps the previous Normal opponent tuning unchanged.
+  normal: { label: 'Normal', pace: 0.96, catchup: 0.065, aggression: 1, aheadSlack: 0.035, racingLine: 1 },
+  // Berserk is a notch harsher than the old Difícil: slightly faster, better
+  // lines, more frequent items, and less easing off when ahead.
+  berserk: { label: 'Berserk', pace: 1.04, catchup: 0.065, aggression: 0.62, aheadSlack: 0.012, racingLine: 1.18 },
 } as const;
 export type Difficulty = keyof typeof DIFFICULTIES;
+
+/** Map a stored or typed difficulty, including legacy Fácil/Difícil keys, to Normal or Berserk. */
+export function parseDifficulty(saved: string | null | undefined): Difficulty {
+  const value = (saved ?? '').trim().toLocaleLowerCase('pt-BR');
+  const folded = value.normalize('NFD').replace(/\p{M}/gu, '');
+  if (value === 'berserk' || folded === 'hard' || folded === 'dificil') return 'berserk';
+  return 'normal';
+}
 // Three arrow strips live only on the long start/finish straight, past the
 // grid and well before the first corner, so they never fire at rocket start.
 export const BOOST_PADS = [
   { t: 0.07, lane: 0 }, { t: 0.19, lane: 0 },
 ] as const;
 export function loadDifficulty(): Difficulty {
-  try { const saved = localStorage.getItem('hk-difficulty'); if (saved === 'easy' || saved === 'hard') return saved; } catch { /* Storage can be disabled. */ }
+  try {
+    const saved = localStorage.getItem('hk-difficulty');
+    const difficulty = parseDifficulty(saved);
+    if (saved !== difficulty) saveDifficulty(difficulty);
+    return difficulty;
+  } catch { /* Storage can be disabled. */ }
   return 'normal';
 }
 export function saveDifficulty(value: Difficulty) {

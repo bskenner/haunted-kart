@@ -37,7 +37,7 @@ Na contagem 3-2-1-Vai, comece a acelerar com a **seta para cima** logo depois de
 
 Na tela inicial e na escolha do personagem você define duas opções independentes, lembradas no navegador:
 
-- **Dificuldade** — Fácil, Normal ou Difícil: muda o ritmo e a agressividade dos adversários.
+- **Dificuldade** — Normal (padrão) ou Berserk: muda o ritmo e a agressividade dos adversários. O Berserk é o nível difícil, um pouco mais puxado que o antigo Difícil.
 - **Velocidade do motor** — Normal (padrão) ou Turbo, no estilo 100cc/150cc. O Turbo aumenta a velocidade máxima em cerca de 22% e a aceleração em cerca de 25% para **todos** os karts (você e a IA), com um pouco mais de aderência e direção e uma câmera mais rápida, para continuar controlável. A classe escolhida aparece no HUD e na tela de resultados.
 
 ### Teclado
